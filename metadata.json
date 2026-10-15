@@ -1,0 +1,6 @@
+{
+  "name": "Takue Microdrama Studio",
+  "description": "Professional AI microdrama studio with automated episode & clip numbering, ModelArk video generation, character vault, video editor, and episode merger.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
