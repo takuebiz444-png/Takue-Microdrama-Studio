@@ -16,6 +16,12 @@ const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 
+const UPLOAD_DIR = path.resolve(__dirname, 'public/uploads');
+if (!fs.existsSync(UPLOAD_DIR)) {
+  fs.mkdirSync(UPLOAD_DIR, { recursive: true });
+}
+app.use('/uploads', express.static(UPLOAD_DIR));
+
 // In-memory job store for video generation tasks
 interface VideoJob {
   id: string;
@@ -157,6 +163,43 @@ app.post('/api/modelark/credits/topup', (req, res) => {
     availableBalance: Math.max(0, accountCreditsTotal - usedCredits),
     message: `Successfully allocated +${amount} ModelArk compute credits.`,
   });
+});
+
+// 1c. Character Picture Upload Endpoint
+app.post('/api/upload/character-image', (req, res) => {
+  const { imageBase64, filename } = req.body;
+  if (!imageBase64 || typeof imageBase64 !== 'string') {
+    return res.status(400).json({ error: 'imageBase64 string is required.' });
+  }
+
+  try {
+    const matches = imageBase64.match(/^data:([A-Za-z-+\/]+);base64,(.+)$/);
+    let buffer: Buffer;
+    let ext = 'jpg';
+
+    if (matches && matches.length === 3) {
+      const mime = matches[1];
+      ext = mime.includes('png') ? 'png' : mime.includes('webp') ? 'webp' : 'jpg';
+      buffer = Buffer.from(matches[2], 'base64');
+    } else {
+      buffer = Buffer.from(imageBase64, 'base64');
+    }
+
+    const safeName = `char_${Date.now()}_${Math.random().toString(36).substring(2, 7)}.${ext}`;
+    const filePath = path.join(UPLOAD_DIR, safeName);
+    fs.writeFileSync(filePath, buffer);
+
+    const publicUrl = `/uploads/${safeName}`;
+    return res.json({
+      success: true,
+      url: publicUrl,
+      filename: safeName,
+      message: 'Character photo uploaded successfully.',
+    });
+  } catch (err: any) {
+    console.error('[Upload API] Error saving character image:', err);
+    return res.status(500).json({ error: 'Failed to write image file to disk.' });
+  }
 });
 
 // 2. Test Connection endpoint
@@ -307,16 +350,23 @@ app.post('/api/modelark/generate', async (req, res) => {
   try {
     const contentPayload: any[] = [{ type: 'text', text: prompt }];
 
-    // Add character reference images if provided
+    // Add character reference images if provided (supports http, /uploads, and base64 data URLs)
     if (Array.isArray(referenceImages) && referenceImages.length > 0) {
       for (const imgUrl of referenceImages) {
-        if (typeof imgUrl === 'string' && imgUrl.startsWith('http')) {
+        if (typeof imgUrl === 'string' && (imgUrl.startsWith('http') || imgUrl.startsWith('data:image/') || imgUrl.startsWith('/uploads'))) {
           contentPayload.push({
             type: 'image_url',
             image_url: { url: imgUrl }
           });
         }
       }
+    }
+
+    if (characterDetails && typeof characterDetails === 'string' && characterDetails.trim()) {
+      contentPayload.push({
+        type: 'text',
+        text: `[CHARACTER CONTINUITY RULES: ${characterDetails.trim()}]`,
+      });
     }
 
     const response = await fetch(MODELARK_ENDPOINT, {
@@ -471,7 +521,7 @@ function simulateJobCompletion(
     if (job && job.generationStatus === 'generating') {
       job.generationStatus = 'completed';
       job.completedAt = Date.now();
-      job.outputVideoUrl = getDramaSampleVideoUrl(episodeNumber, clipNumber);
+      job.outputVideoUrl = getDramaSampleVideoUrl(episodeNumber, clipNumber, prompt);
     }
   }, 3500);
 }
@@ -602,19 +652,29 @@ function buildNarrativeEpisodes(
 }
 
 // Sample diverse cinematic drama video clips for high-fidelity playback
-function getDramaSampleVideoUrl(episodeNumber: number, clipNumber: number): string {
-  // Collection of reliable, playable MP4 vertical and cinematic video streams
-  const sampleVideos = [
-    'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4',
+function getDramaSampleVideoUrl(episodeNumber: number, clipNumber: number, promptText: string = ''): string {
+  const lower = promptText.toLowerCase();
+  const isFemaleContext = /female|woman|girl|lady|heiress|actress|heroine|she\b|her\b|daughter|mother|sister|wife|queen|princess/.test(lower);
+
+  // Female-centric dramatic and cinematic vertical/16:9 microdrama preview streams
+  const femaleSampleVideos = [
+    'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/TearsOfSteel.mp4',
+    'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerJoyBlazes.mp4',
     'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerEscapes.mp4',
     'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerFun.mp4',
-    'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerJoyBlazes.mp4',
     'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerMeltdowns.mp4',
+  ];
+
+  const maleSampleVideos = [
+    'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4',
     'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/WeAreGoingOnBullrun.mp4',
     'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/TearsOfSteel.mp4',
+    'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerEscapes.mp4',
   ];
-  const index = (episodeNumber * 5 + clipNumber) % sampleVideos.length;
-  return sampleVideos[index];
+
+  const list = isFemaleContext ? femaleSampleVideos : maleSampleVideos;
+  const index = (episodeNumber * 5 + clipNumber) % list.length;
+  return list[index];
 }
 
 // Vite middleware in dev or static files in production

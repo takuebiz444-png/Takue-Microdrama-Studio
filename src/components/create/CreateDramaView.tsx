@@ -27,8 +27,9 @@ import {
   Palette,
 } from 'lucide-react';
 import { formatClipSequenceLabel, getDefaultClipFilename, padNumber } from '../../utils/naming';
-import { Character, DramaProject } from '../../types/drama';
+import { Character, CharacterGender, DramaProject } from '../../types/drama';
 import { CHARACTER_TEMPLATES } from '../../data/defaultCharacters';
+import { CharacterImageUploader } from '../characters/CharacterImageUploader';
 import { MASTER_PROMPT_PRESETS, DEFAULT_MASTER_PROMPT } from '../../data/masterPrompts';
 import { CreationProceduresModal } from '../modals/CreationProceduresModal';
 
@@ -79,10 +80,12 @@ export const CreateDramaView: React.FC = () => {
   // In-wizard Add Character form state
   const [showAddCharForm, setShowAddCharForm] = useState(false);
   const [newCharName, setNewCharName] = useState('');
+  const [newCharGender, setNewCharGender] = useState<CharacterGender>('female');
   const [newCharRole, setNewCharRole] = useState<'protagonist' | 'antagonist' | 'supporting'>('protagonist');
   const [newCharTagline, setNewCharTagline] = useState('');
   const [newCharVisuals, setNewCharVisuals] = useState('');
   const [newCharWardrobe, setNewCharWardrobe] = useState('');
+  const [newCharImageUrl, setNewCharImageUrl] = useState('');
   const [newCharLock, setNewCharLock] = useState(true);
 
   // Generation state
@@ -98,35 +101,46 @@ export const CreateDramaView: React.FC = () => {
       return;
     }
 
+    const defaultImage =
+      newCharGender === 'female'
+        ? 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=500&auto=format&fit=crop&q=80'
+        : 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=500&auto=format&fit=crop&q=80';
+
+    const chosenImage = newCharImageUrl.trim() || defaultImage;
+
     const newChar: Character = {
       id: `char_${Date.now()}`,
       name: newCharName.trim(),
+      gender: newCharGender,
       role: newCharRole,
       tagline: newCharTagline.trim() || `${newCharRole.toUpperCase()} Role`,
       description: newCharVisuals.trim(),
       visualTraits: newCharVisuals.trim(),
       clothingDetails: newCharWardrobe.trim(),
-      referenceImageUrl:
-        'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=400&auto=format&fit=crop&q=80',
-      voiceStyle: 'Clear dramatic voice',
+      referenceImageUrl: chosenImage,
+      voiceStyle: newCharGender === 'female' ? 'Expressive feminine voice' : 'Clear dramatic voice',
       isLocked: newCharLock,
     };
 
     addCharacter(newChar);
     setNewCharName('');
+    setNewCharGender('female');
     setNewCharTagline('');
     setNewCharVisuals('');
     setNewCharWardrobe('');
+    setNewCharImageUrl('');
     setNewCharLock(true);
     setShowAddCharForm(false);
   };
 
   const handleApplyTemplateInline = (tmpl: typeof CHARACTER_TEMPLATES[0]) => {
     setNewCharName(tmpl.name);
+    setNewCharGender(tmpl.gender);
     setNewCharRole(tmpl.role);
     setNewCharTagline(tmpl.tagline);
     setNewCharVisuals(tmpl.visualTraits);
     setNewCharWardrobe(tmpl.clothingDetails);
+    setNewCharImageUrl(tmpl.referenceImageUrl);
     setNewCharLock(true);
   };
 
@@ -615,6 +629,14 @@ export const CreateDramaView: React.FC = () => {
                 />
               </div>
 
+              {/* Character Photo Upload & Gender */}
+              <CharacterImageUploader
+                imageUrl={newCharImageUrl}
+                onChangeImageUrl={setNewCharImageUrl}
+                gender={newCharGender}
+                onChangeGender={setNewCharGender}
+              />
+
               {/* Lock Character Toggle */}
               <div className="p-2.5 bg-blue-50 border border-blue-200 rounded-xl flex items-center justify-between">
                 <div className="flex items-center gap-1.5">
@@ -683,16 +705,27 @@ export const CreateDramaView: React.FC = () => {
                       <img
                         src={char.referenceImageUrl}
                         alt={char.name}
-                        className="w-9 h-9 rounded-xl object-cover border border-slate-200"
+                        className="w-10 h-10 rounded-xl object-cover border border-slate-200"
                         onError={(e) => {
                           (e.target as HTMLImageElement).src =
-                            'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=400&auto=format&fit=crop&q=80';
+                            char.gender === 'female'
+                              ? 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=500&auto=format&fit=crop&q=80'
+                              : 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=500&auto=format&fit=crop&q=80';
                         }}
                       />
                       <div>
-                        <div className="flex items-center gap-1.5">
+                        <div className="flex items-center gap-1.5 flex-wrap">
                           <span className="font-extrabold text-xs text-blue-950">
                             {char.name}
+                          </span>
+                          <span
+                            className={`text-[9px] font-extrabold px-1.5 py-0.2 rounded-md ${
+                              char.gender === 'female'
+                                ? 'bg-rose-50 text-rose-700 border border-rose-200'
+                                : 'bg-blue-50 text-blue-700 border border-blue-200'
+                            }`}
+                          >
+                            {char.gender === 'female' ? '♀ Female' : '♂ Male'}
                           </span>
                           <span className="text-[9px] font-bold uppercase bg-blue-100 text-blue-800 px-1.5 py-0.2 rounded-md">
                             {char.role}

@@ -1,7 +1,8 @@
 import React, { useState } from 'react';
 import { useDrama } from '../../context/DramaContext';
-import { Character } from '../../types/drama';
+import { Character, CharacterGender } from '../../types/drama';
 import { CHARACTER_TEMPLATES } from '../../data/defaultCharacters';
+import { CharacterImageUploader } from './CharacterImageUploader';
 import {
   Plus,
   Shield,
@@ -34,6 +35,7 @@ export const CharactersView: React.FC = () => {
 
   // Form state
   const [name, setName] = useState('');
+  const [gender, setGender] = useState<CharacterGender>('female');
   const [role, setRole] = useState<'protagonist' | 'antagonist' | 'supporting'>('protagonist');
   const [tagline, setTagline] = useState('');
   const [visualTraits, setVisualTraits] = useState('');
@@ -45,6 +47,7 @@ export const CharactersView: React.FC = () => {
 
   const resetForm = () => {
     setName('');
+    setGender('female');
     setRole('protagonist');
     setTagline('');
     setVisualTraits('');
@@ -65,6 +68,7 @@ export const CharactersView: React.FC = () => {
   const handleOpenEdit = (char: Character) => {
     setEditingId(char.id);
     setName(char.name);
+    setGender(char.gender || 'female');
     setRole(char.role);
     setTagline(char.tagline);
     setVisualTraits(char.visualTraits);
@@ -78,6 +82,7 @@ export const CharactersView: React.FC = () => {
 
   const handleApplyTemplate = (tmpl: typeof CHARACTER_TEMPLATES[0]) => {
     setName(tmpl.name);
+    setGender(tmpl.gender);
     setRole(tmpl.role);
     setTagline(tmpl.tagline);
     setVisualTraits(tmpl.visualTraits);
@@ -95,20 +100,26 @@ export const CharactersView: React.FC = () => {
       return;
     }
 
+    const defaultImage =
+      gender === 'female'
+        ? 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=500&auto=format&fit=crop&q=80'
+        : 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=500&auto=format&fit=crop&q=80';
+
+    const chosenImage = referenceImageUrl.trim() || defaultImage;
+
     if (editingId) {
       const existing = characters.find((c) => c.id === editingId);
       if (existing) {
         updateCharacter({
           ...existing,
           name: name.trim(),
+          gender,
           role,
           tagline: tagline.trim() || `${role.toUpperCase()} Role`,
           visualTraits: visualTraits.trim(),
           clothingDetails: clothingDetails.trim(),
           description: description.trim(),
-          referenceImageUrl:
-            referenceImageUrl.trim() ||
-            'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=400&auto=format&fit=crop&q=80',
+          referenceImageUrl: chosenImage,
           voiceStyle: voiceStyle.trim(),
           isLocked: lockDirectly,
         });
@@ -117,14 +128,13 @@ export const CharactersView: React.FC = () => {
       const newChar: Character = {
         id: `char_${Date.now()}`,
         name: name.trim(),
+        gender,
         role,
         tagline: tagline.trim() || `${role.toUpperCase()} Role`,
         visualTraits: visualTraits.trim(),
         clothingDetails: clothingDetails.trim(),
         description: description.trim(),
-        referenceImageUrl:
-          referenceImageUrl.trim() ||
-          'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=400&auto=format&fit=crop&q=80',
+        referenceImageUrl: chosenImage,
         voiceStyle: voiceStyle.trim(),
         isLocked: lockDirectly,
       };
@@ -286,19 +296,13 @@ export const CharactersView: React.FC = () => {
             />
           </div>
 
-          {/* Reference Image URL */}
-          <div>
-            <label className="block text-xs font-bold text-slate-800 mb-1">
-              Reference Image URL (Optional)
-            </label>
-            <input
-              type="url"
-              value={referenceImageUrl}
-              onChange={(e) => setReferenceImageUrl(e.target.value)}
-              placeholder="https://... photo reference for ModelArk"
-              className="w-full text-xs font-mono px-3 py-2 bg-slate-50 border border-slate-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:outline-hidden"
-            />
-          </div>
+          {/* Character Photo Upload & Gender Setting */}
+          <CharacterImageUploader
+            imageUrl={referenceImageUrl}
+            onChangeImageUrl={setReferenceImageUrl}
+            gender={gender}
+            onChangeGender={setGender}
+          />
 
           {/* Lock Checkbox */}
           <div className="p-3 bg-blue-50 border border-blue-200 rounded-2xl flex items-center justify-between">
@@ -395,7 +399,9 @@ export const CharactersView: React.FC = () => {
                       className="w-12 h-12 rounded-xl object-cover border border-slate-200 shadow-2xs"
                       onError={(e) => {
                         (e.target as HTMLImageElement).src =
-                          'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=400&auto=format&fit=crop&q=80';
+                          char.gender === 'female'
+                            ? 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=500&auto=format&fit=crop&q=80'
+                            : 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=500&auto=format&fit=crop&q=80';
                       }}
                     />
                     {char.isLocked && (
@@ -406,14 +412,23 @@ export const CharactersView: React.FC = () => {
                   </div>
 
                   <div>
-                    <div className="flex items-center gap-1.5">
+                    <div className="flex items-center gap-1.5 flex-wrap">
                       <h4 className="font-extrabold text-xs text-blue-950">{char.name}</h4>
+                      <span
+                        className={`text-[9px] font-extrabold px-1.5 py-0.5 rounded-md ${
+                          char.gender === 'female'
+                            ? 'bg-rose-50 text-rose-700 border border-rose-200'
+                            : 'bg-blue-50 text-blue-700 border border-blue-200'
+                        }`}
+                      >
+                        {char.gender === 'female' ? '♀ Female' : '♂ Male'}
+                      </span>
                       <span
                         className={`text-[9px] font-bold uppercase px-1.5 py-0.5 rounded-md ${
                           char.role === 'protagonist'
                             ? 'bg-blue-100 text-blue-800'
                             : char.role === 'antagonist'
-                            ? 'bg-rose-100 text-rose-800'
+                            ? 'bg-amber-100 text-amber-800'
                             : 'bg-slate-100 text-slate-700'
                         }`}
                       >

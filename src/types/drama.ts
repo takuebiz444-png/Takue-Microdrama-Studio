@@ -1,9 +1,12 @@
 export type ActiveTabType = 'dashboard' | 'characters' | 'create' | 'projects' | 'editor' | 'settings';
 export type GenerationStatus = 'queued' | 'generating' | 'completed' | 'failed';
 
+export type CharacterGender = 'female' | 'male' | 'other';
+
 export interface Character {
   id: string;
   name: string;
+  gender?: CharacterGender;
   role: 'protagonist' | 'antagonist' | 'supporting';
   archetype?: string;
   tagline: string;

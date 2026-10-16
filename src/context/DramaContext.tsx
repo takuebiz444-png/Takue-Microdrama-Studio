@@ -581,6 +581,26 @@ export const DramaProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       }
 
       try {
+        // Collect locked characters & reference images
+        const lockedChars = characters.filter((c) => c.isLocked);
+        const referenceImages = lockedChars
+          .map((c) => c.referenceImageUrl)
+          .filter((url) => Boolean(url && url.length > 5));
+
+        const characterDetails = lockedChars.length > 0
+          ? lockedChars
+              .map((c) => {
+                const genderLabel =
+                  c.gender === 'female'
+                    ? 'STRICT FEMALE (Woman / Girl, feminine facial traits, strictly NOT a man)'
+                    : c.gender === 'male'
+                    ? 'MALE (Man / Boy)'
+                    : 'CHARACTER';
+                return `${genderLabel}: ${c.name} (${c.role}), Appearance: ${c.visualTraits}, Wardrobe: ${c.clothingDetails}`;
+              })
+              .join(' | ')
+          : undefined;
+
         // Submit generation to ModelArk
         const genRes = await ModelArkService.generateClip({
           projectId: activeJob.projectId,
@@ -590,6 +610,8 @@ export const DramaProvider: React.FC<{ children: React.ReactNode }> = ({ childre
           totalClipsInEpisode: currentProjectRef.current?.clipsPerEpisode || 5,
           selectedModel: activeJob.selectedModel,
           prompt: activeJob.prompt,
+          characterDetails,
+          referenceImages,
           durationSeconds: 12,
           forceSimulation: modelArkConfig.forceSimulation,
         });
@@ -741,7 +763,14 @@ export const DramaProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     const projectChars = params.characters && params.characters.length > 0 ? params.characters : characters;
     const lockedChars = projectChars.filter((c) => c.isLocked);
     const lockedModifier = lockedChars.length > 0
-      ? `Character Continuity: ${lockedChars.map((c) => `${c.role}: "${c.name}", appearance: ${c.visualTraits}, wardrobe: ${c.clothingDetails}`).join('; ')}.`
+      ? `Character Continuity: ${lockedChars.map((c) => {
+          const genderPrefix = c.gender === 'female'
+            ? 'FEMALE (Woman / Girl, strictly female presentation and feminine features - NOT A MAN)'
+            : c.gender === 'male'
+            ? 'MALE (Man / Boy, strictly male presentation)'
+            : 'CHARACTER';
+          return `[${genderPrefix} ${c.role}: "${c.name}", Appearance: ${c.visualTraits}, Wardrobe: ${c.clothingDetails}]`;
+        }).join('; ')}.`
       : '';
 
     const projectId = `proj_${Date.now()}`;
