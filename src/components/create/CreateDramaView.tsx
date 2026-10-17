@@ -27,7 +27,7 @@ import {
   Palette,
 } from 'lucide-react';
 import { formatClipSequenceLabel, getDefaultClipFilename, padNumber } from '../../utils/naming';
-import { Character, CharacterGender, DramaProject } from '../../types/drama';
+import { Character, CharacterGender, CharacterStageLook, DramaProject } from '../../types/drama';
 import { CHARACTER_TEMPLATES } from '../../data/defaultCharacters';
 import { CharacterImageUploader } from '../characters/CharacterImageUploader';
 import { MASTER_PROMPT_PRESETS, DEFAULT_MASTER_PROMPT } from '../../data/masterPrompts';
@@ -86,6 +86,8 @@ export const CreateDramaView: React.FC = () => {
   const [newCharVisuals, setNewCharVisuals] = useState('');
   const [newCharWardrobe, setNewCharWardrobe] = useState('');
   const [newCharImageUrl, setNewCharImageUrl] = useState('');
+  const [newCharAdditionalImages, setNewCharAdditionalImages] = useState<string[]>([]);
+  const [newCharStageLooks, setNewCharStageLooks] = useState<CharacterStageLook[]>([]);
   const [newCharLock, setNewCharLock] = useState(true);
 
   // Generation state
@@ -107,6 +109,10 @@ export const CreateDramaView: React.FC = () => {
         : 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=500&auto=format&fit=crop&q=80';
 
     const chosenImage = newCharImageUrl.trim() || defaultImage;
+    const allImages = [chosenImage, ...newCharAdditionalImages].filter(Boolean);
+    const finalStageLooks = newCharStageLooks.length > 0 ? newCharStageLooks : [
+      { id: 'look_1', label: 'Poor / Humble Era', url: chosenImage, fromEpisode: 1, toEpisode: 20 },
+    ];
 
     const newChar: Character = {
       id: `char_${Date.now()}`,
@@ -118,6 +124,8 @@ export const CreateDramaView: React.FC = () => {
       visualTraits: newCharVisuals.trim(),
       clothingDetails: newCharWardrobe.trim(),
       referenceImageUrl: chosenImage,
+      referenceImages: allImages,
+      stageLooks: finalStageLooks,
       voiceStyle: newCharGender === 'female' ? 'Expressive feminine voice' : 'Clear dramatic voice',
       isLocked: newCharLock,
     };
@@ -129,6 +137,8 @@ export const CreateDramaView: React.FC = () => {
     setNewCharVisuals('');
     setNewCharWardrobe('');
     setNewCharImageUrl('');
+    setNewCharAdditionalImages([]);
+    setNewCharStageLooks([]);
     setNewCharLock(true);
     setShowAddCharForm(false);
   };
@@ -633,6 +643,10 @@ export const CreateDramaView: React.FC = () => {
               <CharacterImageUploader
                 imageUrl={newCharImageUrl}
                 onChangeImageUrl={setNewCharImageUrl}
+                additionalImages={newCharAdditionalImages}
+                onChangeAdditionalImages={setNewCharAdditionalImages}
+                stageLooks={newCharStageLooks}
+                onChangeStageLooks={setNewCharStageLooks}
                 gender={newCharGender}
                 onChangeGender={setNewCharGender}
               />

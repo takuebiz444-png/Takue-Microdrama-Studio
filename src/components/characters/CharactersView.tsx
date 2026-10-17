@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { useDrama } from '../../context/DramaContext';
-import { Character, CharacterGender } from '../../types/drama';
+import { Character, CharacterGender, CharacterStageLook } from '../../types/drama';
 import { CHARACTER_TEMPLATES } from '../../data/defaultCharacters';
 import { CharacterImageUploader } from './CharacterImageUploader';
 import {
@@ -17,6 +17,7 @@ import {
   ArrowRight,
   Info,
   X,
+  Layers,
 } from 'lucide-react';
 
 export const CharactersView: React.FC = () => {
@@ -42,6 +43,8 @@ export const CharactersView: React.FC = () => {
   const [clothingDetails, setClothingDetails] = useState('');
   const [description, setDescription] = useState('');
   const [referenceImageUrl, setReferenceImageUrl] = useState('');
+  const [additionalImages, setAdditionalImages] = useState<string[]>([]);
+  const [stageLooks, setStageLooks] = useState<CharacterStageLook[]>([]);
   const [voiceStyle, setVoiceStyle] = useState('');
   const [isLocked, setIsLocked] = useState(true);
 
@@ -54,6 +57,8 @@ export const CharactersView: React.FC = () => {
     setClothingDetails('');
     setDescription('');
     setReferenceImageUrl('');
+    setAdditionalImages([]);
+    setStageLooks([]);
     setVoiceStyle('');
     setIsLocked(true);
     setEditingId(null);
@@ -75,6 +80,21 @@ export const CharactersView: React.FC = () => {
     setClothingDetails(char.clothingDetails);
     setDescription(char.description);
     setReferenceImageUrl(char.referenceImageUrl);
+    setAdditionalImages(char.referenceImages ? char.referenceImages.slice(1) : []);
+    setStageLooks(
+      char.stageLooks && char.stageLooks.length > 0
+        ? char.stageLooks
+        : [
+            {
+              id: 'look_1',
+              label: 'Poor / Humble Era',
+              url: char.referenceImageUrl,
+              fromEpisode: 1,
+              toEpisode: 20,
+              description: char.clothingDetails || 'Worn humble everyday clothing, modest lifestyle',
+            },
+          ]
+    );
     setVoiceStyle(char.voiceStyle);
     setIsLocked(char.isLocked);
     setShowForm(true);
@@ -89,6 +109,10 @@ export const CharactersView: React.FC = () => {
     setClothingDetails(tmpl.clothingDetails);
     setDescription(tmpl.description);
     setReferenceImageUrl(tmpl.referenceImageUrl);
+    setAdditionalImages([]);
+    setStageLooks([
+      { id: 'look_1', label: 'Look 1 (Humble / Poor Era)', url: tmpl.referenceImageUrl },
+    ]);
     setVoiceStyle(tmpl.voiceStyle);
     setIsLocked(true);
   };
@@ -106,6 +130,10 @@ export const CharactersView: React.FC = () => {
         : 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=500&auto=format&fit=crop&q=80';
 
     const chosenImage = referenceImageUrl.trim() || defaultImage;
+    const allImages = [chosenImage, ...additionalImages].filter(Boolean);
+    const finalStageLooks = stageLooks.length > 0 ? stageLooks : [
+      { id: 'look_1', label: 'Look 1 (Humble / Poor Era)', url: chosenImage },
+    ];
 
     if (editingId) {
       const existing = characters.find((c) => c.id === editingId);
@@ -120,6 +148,8 @@ export const CharactersView: React.FC = () => {
           clothingDetails: clothingDetails.trim(),
           description: description.trim(),
           referenceImageUrl: chosenImage,
+          referenceImages: allImages,
+          stageLooks: finalStageLooks,
           voiceStyle: voiceStyle.trim(),
           isLocked: lockDirectly,
         });
@@ -135,6 +165,8 @@ export const CharactersView: React.FC = () => {
         clothingDetails: clothingDetails.trim(),
         description: description.trim(),
         referenceImageUrl: chosenImage,
+        referenceImages: allImages,
+        stageLooks: finalStageLooks,
         voiceStyle: voiceStyle.trim(),
         isLocked: lockDirectly,
       };
@@ -300,6 +332,10 @@ export const CharactersView: React.FC = () => {
           <CharacterImageUploader
             imageUrl={referenceImageUrl}
             onChangeImageUrl={setReferenceImageUrl}
+            additionalImages={additionalImages}
+            onChangeAdditionalImages={setAdditionalImages}
+            stageLooks={stageLooks}
+            onChangeStageLooks={setStageLooks}
             gender={gender}
             onChangeGender={setGender}
           />
@@ -477,6 +513,73 @@ export const CharactersView: React.FC = () => {
                   </div>
                 )}
               </div>
+
+              {/* Multi-Picture Evolution Strip (e.g. Poor vs Rich Era) */}
+              {((char.stageLooks && char.stageLooks.filter((l) => Boolean(l.url)).length > 1) ||
+                (char.referenceImages && char.referenceImages.length > 1)) && (
+                <div className="bg-blue-50/50 border border-blue-200/80 rounded-xl p-2.5 space-y-1.5">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[10px] font-extrabold text-blue-950 flex items-center gap-1">
+                      <Layers className="w-3 h-3 text-blue-600" />
+                      Character Evolution Pictures ({char.stageLooks ? char.stageLooks.filter((l) => Boolean(l.url)).length : char.referenceImages?.length} Stages)
+                    </span>
+                    <span className="text-[9px] font-mono text-blue-700 bg-blue-100/60 px-1.5 py-0.2 rounded-md">
+                      ModelArk Grounded
+                    </span>
+                  </div>
+
+                  <div className="grid grid-cols-3 gap-1.5">
+                    {(char.stageLooks && char.stageLooks.length > 0
+                      ? char.stageLooks.filter((l) => Boolean(l.url))
+                      : (char.referenceImages || []).map((url, idx) => ({
+                          id: `img_${idx}`,
+                          url,
+                          label: idx === 0 ? 'Look 1 (Poor)' : idx === 1 ? 'Look 2' : 'Look 3 (Rich)',
+                        }))
+                    ).map((look: any, i: number) => (
+                      <div
+                        key={look.id || i}
+                        className="bg-white border border-slate-200 rounded-xl p-1.5 text-center space-y-1 shadow-2xs hover:border-blue-300 transition-all"
+                      >
+                        <div className="relative aspect-square rounded-lg overflow-hidden border border-slate-100">
+                          <img
+                            src={look.url}
+                            alt={look.label}
+                            className="w-full h-full object-cover"
+                          />
+                          <span
+                            className={`absolute top-1 left-1 text-white font-mono text-[8px] font-bold px-1 rounded-xs ${
+                              i === 0
+                                ? 'bg-amber-600/90'
+                                : i === 1
+                                ? 'bg-blue-600/90'
+                                : 'bg-emerald-600/90'
+                            }`}
+                          >
+                            Pic {i + 1}: {i === 0 ? 'Poor' : i === 1 ? 'Rising' : 'Rich'}
+                          </span>
+                          {look.fromEpisode && (
+                            <span className="absolute bottom-1 right-1 bg-slate-950/80 text-white font-mono text-[8px] font-bold px-1 rounded-xs backdrop-blur-2xs">
+                              Ep {look.fromEpisode}–{look.toEpisode || 40}
+                            </span>
+                          )}
+                        </div>
+                        <span className="text-[10px] font-extrabold text-blue-950 block truncate leading-tight">
+                          {look.label}
+                        </span>
+                        {look.description && (
+                          <span
+                            className="text-[8px] text-slate-500 block truncate"
+                            title={look.description}
+                          >
+                            {look.description}
+                          </span>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
 
               {/* Explicit Lock / Unlock Button */}
               <div className="flex items-center justify-between pt-1">

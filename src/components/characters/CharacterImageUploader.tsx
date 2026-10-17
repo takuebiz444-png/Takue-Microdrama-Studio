@@ -7,32 +7,184 @@ import {
   Sparkles,
   Link as LinkIcon,
   AlertCircle,
+  Plus,
+  Layers,
+  Trash2,
+  Edit2,
+  Calendar,
+  Clock,
+  Sparkle,
+  Shirt,
+  Eye,
 } from 'lucide-react';
 import {
   CURATED_FEMALE_PORTRAITS,
   CURATED_MALE_PORTRAITS,
 } from '../../data/defaultCharacters';
-import { CharacterGender } from '../../types/drama';
+import { CharacterGender, CharacterStageLook } from '../../types/drama';
 
 interface CharacterImageUploaderProps {
   imageUrl: string;
   onChangeImageUrl: (url: string) => void;
+  additionalImages?: string[];
+  onChangeAdditionalImages?: (images: string[]) => void;
+  stageLooks?: CharacterStageLook[];
+  onChangeStageLooks?: (looks: CharacterStageLook[]) => void;
   gender: CharacterGender;
   onChangeGender: (gender: CharacterGender) => void;
 }
 
+// Client-side image compression to prevent exceeding browser localStorage quota
+const compressImageFile = (file: File, maxDim = 800, quality = 0.85): Promise<string> => {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const img = new Image();
+      img.onload = () => {
+        let width = img.width;
+        let height = img.height;
+        if (width > maxDim || height > maxDim) {
+          if (width > height) {
+            height = Math.round((height * maxDim) / width);
+            width = maxDim;
+          } else {
+            width = Math.round((width * maxDim) / height);
+            height = maxDim;
+          }
+        }
+        const canvas = document.createElement('canvas');
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext('2d');
+        if (!ctx) return resolve(e.target?.result as string);
+        ctx.drawImage(img, 0, 0, width, height);
+        const dataUrl = canvas.toDataURL('image/jpeg', quality);
+        resolve(dataUrl);
+      };
+      img.onerror = () => resolve(e.target?.result as string);
+      img.src = e.target?.result as string;
+    };
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+};
+
 export const CharacterImageUploader: React.FC<CharacterImageUploaderProps> = ({
   imageUrl,
   onChangeImageUrl,
+  additionalImages = [],
+  onChangeAdditionalImages,
+  stageLooks = [],
+  onChangeStageLooks,
   gender,
   onChangeGender,
 }) => {
-  const [isDragging, setIsDragging] = useState(false);
+  // Active slot index for uploading: 0 = Look 1 (e.g. Poor), 1 = Look 2 (Rising), 2 = Look 3 (Rich)
+  const [activeSlot, setActiveSlot] = useState<number>(0);
   const [isUploading, setIsUploading] = useState(false);
   const [showUrlInput, setShowUrlInput] = useState(false);
   const [customUrl, setCustomUrl] = useState('');
   const [uploadError, setUploadError] = useState<string | null>(null);
+  const [showStageDetails, setShowStageDetails] = useState<boolean>(true);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Default labels and ranges for the 3 stages
+  const DEFAULT_STAGES: CharacterStageLook[] = [
+    {
+      id: 'look_1',
+      label: 'Poor / Humble Era',
+      url: imageUrl || '',
+      description: 'Worn, humble everyday clothing, modest demeanor, impoverished lifestyle',
+      fromEpisode: 1,
+      toEpisode: 20,
+    },
+    {
+      id: 'look_2',
+      label: 'Rising / Transformation Era',
+      url: additionalImages[0] || '',
+      description: 'Clean working attire, determined posture, transitional wardrobe',
+      fromEpisode: 21,
+      toEpisode: 30,
+    },
+    {
+      id: 'look_3',
+      label: 'Rich / Elite Billionaire Era',
+      url: additionalImages[1] || '',
+      description: 'Tailored luxury suit / designer dress, expensive jewelry, affluent commanding posture',
+      fromEpisode: 31,
+      toEpisode: 40,
+    },
+  ];
+
+  // Build current 3 slots representation
+  const slot0: CharacterStageLook = stageLooks[0] || {
+    ...DEFAULT_STAGES[0],
+    url: imageUrl,
+  };
+  const slot1: CharacterStageLook = stageLooks[1] || {
+    ...DEFAULT_STAGES[1],
+    url: additionalImages[0] || '',
+  };
+  const slot2: CharacterStageLook = stageLooks[2] || {
+    ...DEFAULT_STAGES[2],
+    url: additionalImages[1] || '',
+  };
+
+  const currentSlots = [slot0, slot1, slot2];
+
+  const updateSlots = (newSlots: CharacterStageLook[]) => {
+    // 1. Primary image is slot 0 url
+    onChangeImageUrl(newSlots[0]?.url || '');
+
+    // 2. Additional images are slot 1 and slot 2 urls
+    const additional = [newSlots[1]?.url, newSlots[2]?.url].filter(Boolean) as string[];
+    onChangeAdditionalImages?.(additional);
+
+    // 3. Stage looks objects
+    onChangeStageLooks?.(newSlots);
+  };
+
+  const handleSetSlotImage = (slotIndex: number, newUrl: string) => {
+    const updated = [...currentSlots];
+    updated[slotIndex] = {
+      ...updated[slotIndex],
+      url: newUrl,
+      label: updated[slotIndex]?.label || DEFAULT_STAGES[slotIndex].label,
+      fromEpisode: updated[slotIndex]?.fromEpisode ?? DEFAULT_STAGES[slotIndex].fromEpisode,
+      toEpisode: updated[slotIndex]?.toEpisode ?? DEFAULT_STAGES[slotIndex].toEpisode,
+      description: updated[slotIndex]?.description || DEFAULT_STAGES[slotIndex].description,
+    };
+    updateSlots(updated);
+  };
+
+  const handleSetSlotField = (slotIndex: number, field: keyof CharacterStageLook, value: any) => {
+    const updated = [...currentSlots];
+    updated[slotIndex] = {
+      ...updated[slotIndex],
+      [field]: value,
+    };
+    updateSlots(updated);
+  };
+
+  const handleClearSlot = (slotIndex: number) => {
+    const updated = [...currentSlots];
+    updated[slotIndex] = {
+      ...updated[slotIndex],
+      url: '',
+    };
+    updateSlots(updated);
+  };
+
+  const handleApplyPoorToRichPreset = () => {
+    const updated = currentSlots.map((slot, idx) => ({
+      ...slot,
+      label: DEFAULT_STAGES[idx].label,
+      description: DEFAULT_STAGES[idx].description,
+      fromEpisode: DEFAULT_STAGES[idx].fromEpisode,
+      toEpisode: DEFAULT_STAGES[idx].toEpisode,
+    }));
+    updateSlots(updated);
+  };
 
   const handleFileProcess = async (file: File) => {
     if (!file.type.startsWith('image/')) {
@@ -43,33 +195,30 @@ export const CharacterImageUploader: React.FC<CharacterImageUploaderProps> = ({
     setIsUploading(true);
 
     try {
-      // 1. Convert to Base64 Data URL for instant rendering & offline continuity
-      const reader = new FileReader();
-      reader.onload = async (e) => {
-        const base64Data = e.target?.result as string;
-        onChangeImageUrl(base64Data);
+      // 1. Compress image client-side to prevent localStorage quota issues
+      const compressedBase64 = await compressImageFile(file, 800, 0.85);
 
-        // 2. Also try uploading to server for static URL
-        try {
-          const res = await fetch('/api/upload/character-image', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ imageBase64: base64Data, filename: file.name }),
-          });
-          if (res.ok) {
-            const data = await res.json();
-            if (data.url) {
-              onChangeImageUrl(data.url);
-            }
+      // Temporarily set compressed image so user gets instant visual feedback
+      handleSetSlotImage(activeSlot, compressedBase64);
+
+      // 2. Upload to server static folder for permanent, clean /uploads/... URL
+      try {
+        const res = await fetch('/api/upload/character-image', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ imageBase64: compressedBase64, filename: file.name }),
+        });
+        if (res.ok) {
+          const data = await res.json();
+          if (data.url) {
+            handleSetSlotImage(activeSlot, data.url);
           }
-        } catch (serverErr) {
-          // If server write fails, base64 data URL remains active
-          console.warn('Server upload fallback to base64:', serverErr);
-        } finally {
-          setIsUploading(false);
         }
-      };
-      reader.readAsDataURL(file);
+      } catch (serverErr) {
+        console.warn('Server upload fallback to compressed base64:', serverErr);
+      } finally {
+        setIsUploading(false);
+      }
     } catch (err: any) {
       setUploadError('Failed to process image: ' + err.message);
       setIsUploading(false);
@@ -81,35 +230,34 @@ export const CharacterImageUploader: React.FC<CharacterImageUploaderProps> = ({
     if (file) {
       handleFileProcess(file);
     }
-  };
-
-  const handleDrop = (e: React.DragEvent) => {
-    e.preventDefault();
-    setIsDragging(false);
-    const file = e.dataTransfer.files?.[0];
-    if (file) {
-      handleFileProcess(file);
-    }
+    if (e.target) e.target.value = '';
   };
 
   const handleApplyUrl = () => {
     if (customUrl.trim()) {
-      onChangeImageUrl(customUrl.trim());
+      handleSetSlotImage(activeSlot, customUrl.trim());
       setShowUrlInput(false);
       setCustomUrl('');
     }
   };
 
+  const triggerUploadForSlot = (index: number) => {
+    setActiveSlot(index);
+    fileInputRef.current?.click();
+  };
+
   const curatedList = gender === 'female' ? CURATED_FEMALE_PORTRAITS : CURATED_MALE_PORTRAITS;
+  const filledImagesCount = currentSlots.filter((s) => Boolean(s.url)).length;
+  const activeSlotData = currentSlots[activeSlot] || currentSlots[0];
 
   return (
-    <div className="space-y-3">
+    <div className="space-y-3.5">
       {/* 1. Explicit Gender Selection */}
       <div>
         <label className="block text-xs font-bold text-slate-800 mb-1.5 flex items-center justify-between">
           <span>Character Gender *</span>
           <span className="text-[10px] font-normal text-slate-500">
-            Enforces female/male consistency in all clips
+            Enforces strict female/male consistency across all 40 episodes
           </span>
         </label>
         <div className="grid grid-cols-3 gap-2">
@@ -117,13 +265,12 @@ export const CharacterImageUploader: React.FC<CharacterImageUploaderProps> = ({
             type="button"
             onClick={() => {
               onChangeGender('female');
-              // If currently showing default male image, switch to female
               if (
-                !imageUrl ||
-                imageUrl.includes('photo-1507003211169') ||
-                imageUrl.includes('photo-1500648767791')
+                !slot0.url ||
+                slot0.url.includes('photo-1507003211169') ||
+                slot0.url.includes('photo-1500648767791')
               ) {
-                onChangeImageUrl(CURATED_FEMALE_PORTRAITS[0].url);
+                handleSetSlotImage(0, CURATED_FEMALE_PORTRAITS[0].url);
               }
             }}
             className={`py-2 px-3 rounded-xl border text-xs font-extrabold flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
@@ -141,11 +288,11 @@ export const CharacterImageUploader: React.FC<CharacterImageUploaderProps> = ({
             onClick={() => {
               onChangeGender('male');
               if (
-                !imageUrl ||
-                imageUrl.includes('photo-1534528741775') ||
-                imageUrl.includes('photo-1573496359142')
+                !slot0.url ||
+                slot0.url.includes('photo-1534528741775') ||
+                slot0.url.includes('photo-1573496359142')
               ) {
-                onChangeImageUrl(CURATED_MALE_PORTRAITS[0].url);
+                handleSetSlotImage(0, CURATED_MALE_PORTRAITS[0].url);
               }
             }}
             className={`py-2 px-3 rounded-xl border text-xs font-extrabold flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
@@ -172,90 +319,220 @@ export const CharacterImageUploader: React.FC<CharacterImageUploaderProps> = ({
         </div>
       </div>
 
-      {/* 2. Photo Upload Area */}
-      <div>
-        <label className="block text-xs font-bold text-slate-800 mb-1 flex items-center justify-between">
-          <span>Character Picture / Photo Reference *</span>
-          <span className="text-[10px] text-slate-500 font-normal">
-            Upload from your device
-          </span>
-        </label>
+      {/* 2. Multi-Picture Stage Looks (Up to 3 Pictures: e.g. Poor vs Rich Era) */}
+      <div className="space-y-2">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-1.5">
+            <Layers className="w-4 h-4 text-blue-600" />
+            <span className="text-xs font-extrabold text-blue-950">
+              Character Evolution Pictures (Up to 3 Stages: Poor vs Rich)
+            </span>
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={handleApplyPoorToRichPreset}
+              className="text-[10px] font-bold text-amber-700 bg-amber-50 hover:bg-amber-100 border border-amber-200 px-2 py-0.5 rounded-lg flex items-center gap-1 cursor-pointer"
+              title="Apply Poor to Rich life transformation stages"
+            >
+              <Sparkle className="w-2.5 h-2.5 text-amber-600" />
+              <span>'Poor to Rich' Preset</span>
+            </button>
+            <span className="text-[10px] font-mono font-bold bg-blue-100 text-blue-800 px-2 py-0.5 rounded-full">
+              {filledImagesCount} of 3 Pictures
+            </span>
+          </div>
+        </div>
 
-        {imageUrl ? (
-          /* Preview Mode with Replace / Remove */
-          <div className="p-3 bg-slate-50 border-2 border-blue-300 rounded-2xl flex items-center justify-between gap-3 shadow-2xs">
-            <div className="flex items-center gap-3 min-w-0">
-              <div className="relative shrink-0">
-                <img
-                  src={imageUrl}
-                  alt="Character Reference"
-                  className="w-14 h-14 rounded-xl object-cover border-2 border-white shadow-md"
+        <p className="text-[11px] text-slate-600 leading-tight">
+          Upload 3 pictures showing this character across their life story (e.g. <strong>Picture 1: When Poor / Beggar</strong>, <strong>Picture 2: Rising</strong>, and <strong>Picture 3: When Rich / Billionaire</strong>). When generating videos, ModelArk uses the matching picture and prompt for each episode!
+        </p>
+
+        {/* 3 Interactive Cards for the 3 Pictures */}
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 pt-1">
+          {currentSlots.map((slot, index) => {
+            const hasImage = Boolean(slot.url);
+            const isSelected = activeSlot === index;
+            const defaultLabel = DEFAULT_STAGES[index].label;
+
+            return (
+              <div
+                key={index}
+                onClick={() => setActiveSlot(index)}
+                className={`p-2.5 rounded-2xl border-2 transition-all cursor-pointer space-y-2 relative ${
+                  isSelected
+                    ? 'border-blue-600 bg-blue-50/40 shadow-xs ring-2 ring-blue-500/20'
+                    : 'border-slate-200 bg-slate-50/70 hover:border-slate-300'
+                }`}
+              >
+                {/* Stage Header & Label */}
+                <div className="flex items-center justify-between gap-1">
+                  <span className={`text-[9px] font-mono font-extrabold px-1.5 py-0.5 rounded-md border ${
+                    index === 0 ? 'bg-amber-50 text-amber-800 border-amber-200' :
+                    index === 1 ? 'bg-blue-50 text-blue-800 border-blue-200' :
+                    'bg-emerald-50 text-emerald-800 border-emerald-200'
+                  }`}>
+                    Pic {index + 1}: {index === 0 ? 'Poor' : index === 1 ? 'Rising' : 'Rich'}
+                  </span>
+                  <span className="text-[9px] font-bold text-slate-500 font-mono">
+                    Ep {slot.fromEpisode ?? DEFAULT_STAGES[index].fromEpisode}–{slot.toEpisode ?? DEFAULT_STAGES[index].toEpisode}
+                  </span>
+                </div>
+
+                <input
+                  type="text"
+                  value={slot.label}
+                  onClick={(e) => e.stopPropagation()}
+                  onChange={(e) => handleSetSlotField(index, 'label', e.target.value)}
+                  placeholder={defaultLabel}
+                  className="text-[11px] font-bold text-slate-900 bg-white border border-slate-200 rounded-md px-1.5 py-1 focus:border-blue-500 focus:outline-hidden w-full"
                 />
-                <span
-                  className={`absolute -top-1 -right-1 w-4 h-4 rounded-full flex items-center justify-center text-[9px] font-bold text-white ${
-                    gender === 'female' ? 'bg-rose-500' : 'bg-blue-600'
-                  }`}
-                >
-                  {gender === 'female' ? '♀' : '♂'}
-                </span>
+
+                {/* Picture Preview or Upload Trigger */}
+                {hasImage ? (
+                  <div className="relative group rounded-xl overflow-hidden aspect-square border border-slate-200 bg-white shadow-2xs">
+                    <img
+                      src={slot.url}
+                      alt={slot.label}
+                      className="w-full h-full object-cover"
+                    />
+                    <div className="absolute inset-0 bg-slate-950/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-2">
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          triggerUploadForSlot(index);
+                        }}
+                        className="p-1.5 bg-white text-blue-700 rounded-lg text-[10px] font-bold shadow-xs hover:bg-blue-50 cursor-pointer"
+                        title="Replace photo"
+                      >
+                        <Upload className="w-3.5 h-3.5" />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleClearSlot(index);
+                        }}
+                        className="p-1.5 bg-white text-rose-600 rounded-lg text-[10px] font-bold shadow-xs hover:bg-rose-50 cursor-pointer"
+                        title="Remove photo"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+
+                    <span className="absolute bottom-1 left-1 right-1 bg-slate-950/75 text-white text-[9px] font-semibold px-1.5 py-0.5 rounded-md truncate backdrop-blur-xs text-center">
+                      {slot.label || `Pic ${index + 1}`}
+                    </span>
+                  </div>
+                ) : (
+                  <div
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      triggerUploadForSlot(index);
+                    }}
+                    className="border-2 border-dashed border-blue-300/80 hover:border-blue-500 bg-white rounded-xl aspect-square flex flex-col items-center justify-center p-2 text-center transition-all hover:bg-blue-50/40 cursor-pointer"
+                  >
+                    <div className="w-7 h-7 rounded-lg bg-blue-50 text-blue-600 flex items-center justify-center mb-1">
+                      <Upload className="w-3.5 h-3.5" />
+                    </div>
+                    <span className="text-[10px] font-extrabold text-blue-950 block leading-tight">
+                      + Add Picture {index + 1}
+                    </span>
+                    <span className="text-[8px] text-slate-500 block mt-0.5">
+                      {index === 0
+                        ? 'e.g. When Poor'
+                        : index === 1
+                        ? 'e.g. Transformation'
+                        : 'e.g. When Rich'}
+                    </span>
+                  </div>
+                )}
+
+                {/* Quick Action below slot */}
+                <div className="flex items-center justify-between text-[10px]">
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      triggerUploadForSlot(index);
+                    }}
+                    className="text-blue-600 font-bold hover:underline cursor-pointer"
+                  >
+                    {hasImage ? 'Change Photo' : 'Upload Photo'}
+                  </button>
+                  {hasImage && (
+                    <span className="text-emerald-600 font-bold flex items-center gap-0.5">
+                      <Check className="w-2.5 h-2.5" /> Attached
+                    </span>
+                  )}
+                </div>
               </div>
-              <div className="min-w-0">
-                <span className="text-xs font-extrabold text-blue-950 block truncate">
-                  Character Photo Attached
-                </span>
-                <span className="text-[10px] text-emerald-600 font-bold flex items-center gap-1">
-                  <Check className="w-3 h-3" />
-                  Ready for ModelArk Continuity
-                </span>
-              </div>
+            );
+          })}
+        </div>
+
+        {/* Active Stage Details (Wardrobe & Episode Range) */}
+        <div className="p-3 bg-white border border-blue-200 rounded-2xl shadow-2xs space-y-2 mt-2">
+          <div className="flex items-center justify-between">
+            <span className="text-[11px] font-extrabold text-blue-950 flex items-center gap-1.5">
+              <Shirt className="w-3.5 h-3.5 text-blue-600" />
+              <span>Details for Picture {activeSlot + 1} ({activeSlotData.label})</span>
+            </span>
+            <span className="text-[10px] text-blue-700 font-bold">
+              Injected into ModelArk Prompts
+            </span>
+          </div>
+
+          <div className="grid grid-cols-2 gap-2">
+            <div>
+              <label className="block text-[10px] font-bold text-slate-600 mb-0.5">
+                Start Episode
+              </label>
+              <input
+                type="number"
+                min="1"
+                max="40"
+                value={activeSlotData.fromEpisode ?? DEFAULT_STAGES[activeSlot].fromEpisode}
+                onChange={(e) =>
+                  handleSetSlotField(activeSlot, 'fromEpisode', parseInt(e.target.value, 10) || 1)
+                }
+                className="w-full text-xs font-semibold px-2.5 py-1.5 bg-slate-50 border border-slate-200 rounded-lg focus:ring-1 focus:ring-blue-500 focus:outline-hidden"
+              />
             </div>
 
-            <div className="flex items-center gap-1.5 shrink-0">
-              <button
-                type="button"
-                onClick={() => fileInputRef.current?.click()}
-                className="px-2.5 py-1.5 bg-white hover:bg-blue-50 text-blue-700 border border-blue-200 rounded-xl text-[11px] font-bold cursor-pointer transition-colors shadow-2xs"
-              >
-                Change Photo
-              </button>
-              <button
-                type="button"
-                onClick={() => onChangeImageUrl('')}
-                className="p-1.5 text-slate-400 hover:text-rose-600 rounded-lg hover:bg-rose-50 cursor-pointer"
-                title="Remove photo"
-              >
-                <X className="w-4 h-4" />
-              </button>
+            <div>
+              <label className="block text-[10px] font-bold text-slate-600 mb-0.5">
+                End Episode
+              </label>
+              <input
+                type="number"
+                min="1"
+                max="40"
+                value={activeSlotData.toEpisode ?? DEFAULT_STAGES[activeSlot].toEpisode}
+                onChange={(e) =>
+                  handleSetSlotField(activeSlot, 'toEpisode', parseInt(e.target.value, 10) || 40)
+                }
+                className="w-full text-xs font-semibold px-2.5 py-1.5 bg-slate-50 border border-slate-200 rounded-lg focus:ring-1 focus:ring-blue-500 focus:outline-hidden"
+              />
             </div>
           </div>
-        ) : (
-          /* Upload Dropzone */
-          <div
-            onDragOver={(e) => {
-              e.preventDefault();
-              setIsDragging(true);
-            }}
-            onDragLeave={() => setIsDragging(false)}
-            onDrop={handleDrop}
-            onClick={() => fileInputRef.current?.click()}
-            className={`border-2 border-dashed rounded-2xl p-4 text-center cursor-pointer transition-all ${
-              isDragging
-                ? 'border-blue-600 bg-blue-50/70 scale-99'
-                : 'border-blue-300 hover:border-blue-500 bg-blue-50/30 hover:bg-blue-50/50'
-            }`}
-          >
-            <div className="w-10 h-10 rounded-2xl bg-blue-100 text-blue-600 flex items-center justify-center mx-auto mb-2 shadow-2xs">
-              <Upload className="w-5 h-5" />
-            </div>
-            <p className="text-xs font-extrabold text-blue-950">
-              {isUploading ? 'Uploading photo...' : 'Click or Drag & Drop to Upload Picture'}
-            </p>
-            <p className="text-[10px] text-slate-500 mt-0.5">
-              Supports PNG, JPG, WEBP from your phone or computer
-            </p>
-          </div>
-        )}
 
+          <div>
+            <label className="block text-[10px] font-bold text-slate-600 mb-0.5">
+              Appearance, Clothes & Status Details for this Picture (Poor vs Rich)
+            </label>
+            <input
+              type="text"
+              value={activeSlotData.description || ''}
+              onChange={(e) => handleSetSlotField(activeSlot, 'description', e.target.value)}
+              placeholder={DEFAULT_STAGES[activeSlot].description}
+              className="w-full text-xs font-medium px-2.5 py-1.5 bg-slate-50 border border-slate-200 rounded-lg focus:ring-1 focus:ring-blue-500 focus:outline-hidden"
+            />
+          </div>
+        </div>
+
+        {/* Global Hidden File Input */}
         <input
           ref={fileInputRef}
           type="file"
@@ -270,14 +547,21 @@ export const CharacterImageUploader: React.FC<CharacterImageUploaderProps> = ({
             <span>{uploadError}</span>
           </div>
         )}
+
+        {isUploading && (
+          <div className="flex items-center gap-1.5 text-[10px] text-blue-700 font-bold mt-1 bg-blue-50 p-2 rounded-lg animate-pulse">
+            <Upload className="w-3.5 h-3.5 animate-spin" />
+            <span>Compressing & uploading photo to server...</span>
+          </div>
+        )}
       </div>
 
-      {/* 3. Quick Curated Portrait Gallery */}
+      {/* 3. Preset Portraits For Active Slot */}
       <div className="space-y-1.5 pt-0.5">
         <div className="flex items-center justify-between">
           <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500 flex items-center gap-1">
             <Sparkles className="w-3 h-3 text-amber-500" />
-            <span>Or Choose A Curated {gender === 'female' ? 'Female' : 'Male'} Portrait</span>
+            <span>Curated Portraits For Picture {activeSlot + 1} ({activeSlotData.label})</span>
           </span>
           <button
             type="button"
@@ -285,18 +569,18 @@ export const CharacterImageUploader: React.FC<CharacterImageUploaderProps> = ({
             className="text-[10px] text-blue-600 font-bold hover:underline flex items-center gap-0.5 cursor-pointer"
           >
             <LinkIcon className="w-2.5 h-2.5" />
-            <span>{showUrlInput ? 'Hide URL' : 'Paste URL'}</span>
+            <span>{showUrlInput ? 'Hide URL' : 'Paste Photo URL'}</span>
           </button>
         </div>
 
         <div className="flex items-center gap-2 overflow-x-auto pb-1.5 pt-0.5">
           {curatedList.map((portrait, idx) => {
-            const isSelected = imageUrl === portrait.url;
+            const isSelected = activeSlotData.url === portrait.url;
             return (
               <button
                 key={idx}
                 type="button"
-                onClick={() => onChangeImageUrl(portrait.url)}
+                onClick={() => handleSetSlotImage(activeSlot, portrait.url)}
                 className={`relative shrink-0 w-12 h-12 rounded-xl overflow-hidden border-2 transition-all cursor-pointer ${
                   isSelected
                     ? 'border-blue-600 ring-2 ring-blue-400 scale-105 shadow-md'
@@ -319,20 +603,20 @@ export const CharacterImageUploader: React.FC<CharacterImageUploaderProps> = ({
           })}
         </div>
 
-        {/* Optional URL input toggle */}
+        {/* Custom URL Input dropdown */}
         {showUrlInput && (
-          <div className="flex items-center gap-1.5 pt-1 animate-in fade-in">
+          <div className="flex items-center gap-1.5 p-2 bg-slate-50 border border-slate-200 rounded-xl mt-1">
             <input
               type="url"
               value={customUrl}
               onChange={(e) => setCustomUrl(e.target.value)}
               placeholder="https://example.com/character-photo.jpg"
-              className="flex-1 text-xs font-mono px-3 py-1.5 bg-slate-50 border border-slate-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:outline-hidden"
+              className="flex-1 text-xs px-2.5 py-1.5 bg-white border border-slate-300 rounded-lg focus:ring-1 focus:ring-blue-500 focus:outline-hidden"
             />
             <button
               type="button"
               onClick={handleApplyUrl}
-              className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs rounded-xl cursor-pointer"
+              className="px-3 py-1.5 bg-blue-600 text-white font-bold text-xs rounded-lg hover:bg-blue-700 cursor-pointer"
             >
               Apply
             </button>

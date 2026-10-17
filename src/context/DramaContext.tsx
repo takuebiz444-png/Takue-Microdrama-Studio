@@ -91,6 +91,11 @@ interface DramaContextType {
   updateModelArkConfig: (updates: Partial<ModelArkConfig>) => void;
   checkConnection: () => Promise<any>;
   statusInfo: ModelArkStatusResponse | null;
+
+  // Auto-Save
+  lastSavedAt: number | null;
+  isAutoSaving: boolean;
+  forceSaveNow: () => Promise<void>;
 }
 
 const DramaContext = createContext<DramaContextType | null>(null);
@@ -98,6 +103,66 @@ const DramaContext = createContext<DramaContextType | null>(null);
 const STORAGE_KEY_PROJECTS = 'takue_microdrama_projects_v6';
 const STORAGE_KEY_CHARS = 'takue_microdrama_characters_v6';
 const STORAGE_KEY_CONFIG = 'takue_microdrama_config_v6';
+
+export const getCharacterStageForEpisode = (
+  char: Character,
+  episodeNumber: number
+): { id: string; label: string; description: string; url: string; fromEpisode: number; toEpisode: number } => {
+  if (char.stageLooks && char.stageLooks.length > 0) {
+    const validLooks = char.stageLooks.filter((l) => Boolean(l.url && l.url.trim()));
+    if (validLooks.length > 0) {
+      // Find range match
+      const matched = validLooks.find((l) => {
+        const from = l.fromEpisode ?? 1;
+        const to = l.toEpisode ?? 40;
+        return episodeNumber >= from && episodeNumber <= to;
+      });
+      if (matched) {
+        return {
+          id: matched.id,
+          label: matched.label || (episodeNumber <= 20 ? 'Poor / Humble Era' : 'Rich / Elite Billionaire Era'),
+          description: matched.description || char.clothingDetails || char.visualTraits,
+          url: matched.url,
+          fromEpisode: matched.fromEpisode ?? 1,
+          toEpisode: matched.toEpisode ?? 40,
+        };
+      }
+      // If no exact episode match, choose based on halfway progression
+      if (episodeNumber <= 20) {
+        const first = validLooks[0];
+        return {
+          id: first.id,
+          label: first.label || 'Poor / Humble Era',
+          description: first.description || char.clothingDetails,
+          url: first.url,
+          fromEpisode: first.fromEpisode ?? 1,
+          toEpisode: first.toEpisode ?? 20,
+        };
+      } else {
+        const last = validLooks[validLooks.length - 1];
+        return {
+          id: last.id,
+          label: last.label || 'Rich / Elite Billionaire Era',
+          description: last.description || char.clothingDetails,
+          url: last.url,
+          fromEpisode: last.fromEpisode ?? 21,
+          toEpisode: last.toEpisode ?? 40,
+        };
+      }
+    }
+  }
+
+  // Fallback if no stage looks attached
+  const isPoorEra = episodeNumber <= 20;
+  return {
+    id: isPoorEra ? 'look_1' : 'look_3',
+    label: isPoorEra ? 'Poor / Humble Era' : 'Rich / Elite Billionaire Era',
+    description: char.clothingDetails || (isPoorEra ? 'Humble worn clothing, impoverished lifestyle' : 'Tailored luxury suit, elite status'),
+    url: char.referenceImageUrl,
+    fromEpisode: isPoorEra ? 1 : 21,
+    toEpisode: isPoorEra ? 20 : 40,
+  };
+};
 
 export const DramaProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [activeTab, setActiveTab] = useState<ActiveTabType>('dashboard');
@@ -185,24 +250,99 @@ export const DramaProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const currentProjectRef = useRef(currentProject);
   currentProjectRef.current = currentProject;
 
-  // Sync to local storage
+  // Auto-Save State
+  const [lastSavedAt, setLastSavedAt] = useState<number | null>(Date.now());
+  const [isAutoSaving, setIsAutoSaving] = useState<boolean>(false);
+  const saveTimeoutRef = useRef<any>(null);
+
+  // Reconcile and load server-persisted state across sessions on mount
+  useEffect(() => {
+    fetch('/api/storage/state')
+      .then((res) => res.json())
+      .then((data) => {
+        if (data && data.hasSavedState && data.state) {
+          const serverState = data.state;
+          if (Array.isArray(serverState.characters) && serverState.characters.length > 0) {
+            setCharacters(serverState.characters);
+          }
+          if (Array.isArray(serverState.projects) && serverState.projects.length > 0) {
+            setProjects(serverState.projects);
+            if (serverState.currentProjectId) {
+              const matched = serverState.projects.find((p: any) => p.id === serverState.currentProjectId);
+              if (matched) setCurrentProject(matched);
+            }
+          }
+          if (serverState.modelArkConfig) {
+            setModelArkConfig((prev) => ({ ...prev, ...serverState.modelArkConfig }));
+          }
+          if (data.savedAt) {
+            setLastSavedAt(data.savedAt);
+          }
+        }
+      })
+      .catch((err) => console.warn('Could not load server auto-save state:', err));
+  }, []);
+
+  const persistStateToServer = useCallback(
+    async (projs: DramaProject[], chars: Character[], cfg: ModelArkConfig, curProjId?: string) => {
+      setIsAutoSaving(true);
+      try {
+        const res = await fetch('/api/storage/state', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            projects: projs,
+            characters: chars,
+            modelArkConfig: cfg,
+            currentProjectId: curProjId,
+            masterPrompt: currentProjectRef.current?.masterPrompt,
+          }),
+        });
+        if (res.ok) {
+          const data = await res.json();
+          setLastSavedAt(data.savedAt || Date.now());
+        }
+      } catch (err) {
+        console.warn('Server auto-save error:', err);
+      } finally {
+        setIsAutoSaving(false);
+      }
+    },
+    []
+  );
+
+  // Sync to local storage & server-side auto-save (debounced)
   useEffect(() => {
     try {
       localStorage.setItem(STORAGE_KEY_PROJECTS, JSON.stringify(projects));
     } catch (e) {}
-  }, [projects]);
-
-  useEffect(() => {
     try {
       localStorage.setItem(STORAGE_KEY_CHARS, JSON.stringify(characters));
     } catch (e) {}
-  }, [characters]);
-
-  useEffect(() => {
     try {
       localStorage.setItem(STORAGE_KEY_CONFIG, JSON.stringify(modelArkConfig));
     } catch (e) {}
-  }, [modelArkConfig]);
+
+    // Auto-save to server storage
+    if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
+    saveTimeoutRef.current = setTimeout(() => {
+      persistStateToServer(projects, characters, modelArkConfig, currentProject?.id);
+    }, 400);
+
+    return () => {
+      if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
+    };
+  }, [projects, characters, modelArkConfig, currentProject?.id, persistStateToServer]);
+
+  const forceSaveNow = useCallback(async () => {
+    setIsAutoSaving(true);
+    try {
+      localStorage.setItem(STORAGE_KEY_PROJECTS, JSON.stringify(projects));
+      localStorage.setItem(STORAGE_KEY_CHARS, JSON.stringify(characters));
+      localStorage.setItem(STORAGE_KEY_CONFIG, JSON.stringify(modelArkConfig));
+    } catch (e) {}
+    await persistStateToServer(projects, characters, modelArkConfig, currentProject?.id);
+  }, [projects, characters, modelArkConfig, currentProject?.id, persistStateToServer]);
 
   // Fetch ModelArk backend status on boot
   useEffect(() => {
@@ -581,22 +721,44 @@ export const DramaProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       }
 
       try {
-        // Collect locked characters & reference images
+        // Collect locked characters & reference images matching the current episode's stage (e.g. Poor vs Rich)
         const lockedChars = characters.filter((c) => c.isLocked);
-        const referenceImages = lockedChars
-          .map((c) => c.referenceImageUrl)
-          .filter((url) => Boolean(url && url.length > 5));
+        const referenceImages: string[] = [];
+
+        // 1. Prioritize active stage reference image for this episode
+        lockedChars.forEach((c) => {
+          const stage = getCharacterStageForEpisode(c, activeJob.episodeNumber);
+          if (stage.url && stage.url.length > 5 && !referenceImages.includes(stage.url)) {
+            referenceImages.push(stage.url);
+          }
+          // Also append remaining stage looks so ModelArk maintains facial consistency across transformations
+          if (c.stageLooks) {
+            c.stageLooks.forEach((look) => {
+              if (look.url && look.url.length > 5 && !referenceImages.includes(look.url)) {
+                referenceImages.push(look.url);
+              }
+            });
+          }
+          if (c.referenceImages) {
+            c.referenceImages.forEach((img) => {
+              if (img && img.length > 5 && !referenceImages.includes(img)) {
+                referenceImages.push(img);
+              }
+            });
+          }
+        });
 
         const characterDetails = lockedChars.length > 0
           ? lockedChars
               .map((c) => {
+                const stage = getCharacterStageForEpisode(c, activeJob.episodeNumber);
                 const genderLabel =
                   c.gender === 'female'
-                    ? 'STRICT FEMALE (Woman / Girl, feminine facial traits, strictly NOT a man)'
+                    ? 'STRICT FEMALE (Woman / Girl, feminine facial traits - STRICTLY NOT A MAN)'
                     : c.gender === 'male'
                     ? 'MALE (Man / Boy)'
                     : 'CHARACTER';
-                return `${genderLabel}: ${c.name} (${c.role}), Appearance: ${c.visualTraits}, Wardrobe: ${c.clothingDetails}`;
+                return `${genderLabel}: ${c.name} (${c.role}), Base Facial Traits: ${c.visualTraits}. [EPISODE ${activeJob.episodeNumber} CURRENT STAGE: "${stage.label.toUpperCase()}" (Ep ${stage.fromEpisode}-${stage.toEpisode}) | Appearance & Wardrobe: ${stage.description || c.clothingDetails}. Reference Photo matches this character in this stage. Maintain exact facial features across stages.]`;
               })
               .join(' | ')
           : undefined;
@@ -762,31 +924,35 @@ export const DramaProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     // Gather locked characters to guarantee visual continuity across all 40 episodes
     const projectChars = params.characters && params.characters.length > 0 ? params.characters : characters;
     const lockedChars = projectChars.filter((c) => c.isLocked);
-    const lockedModifier = lockedChars.length > 0
-      ? `Character Continuity: ${lockedChars.map((c) => {
-          const genderPrefix = c.gender === 'female'
-            ? 'FEMALE (Woman / Girl, strictly female presentation and feminine features - NOT A MAN)'
-            : c.gender === 'male'
-            ? 'MALE (Man / Boy, strictly male presentation)'
-            : 'CHARACTER';
-          return `[${genderPrefix} ${c.role}: "${c.name}", Appearance: ${c.visualTraits}, Wardrobe: ${c.clothingDetails}]`;
-        }).join('; ')}.`
-      : '';
-
     const projectId = `proj_${Date.now()}`;
+
     const newEpisodes: Episode[] = splitResult.episodes.map((epData: any) => {
       const epNum = epData.episode_number;
+
+      // Ground characters into their active life stage (e.g. Poor in Ep 1-20, Rich in Ep 21-40)
+      const episodeStageContinuity = lockedChars.length > 0
+        ? `Character Continuity: ${lockedChars.map((c) => {
+            const stage = getCharacterStageForEpisode(c, epNum);
+            const genderPrefix = c.gender === 'female'
+              ? 'FEMALE (Woman / Girl, strictly female presentation - NOT A MAN)'
+              : c.gender === 'male'
+              ? 'MALE (Man / Boy)'
+              : 'CHARACTER';
+            return `[${genderPrefix} ${c.role}: "${c.name}" in ${stage.label.toUpperCase()} (Ep ${stage.fromEpisode}-${stage.toEpisode}) - Face: ${c.visualTraits}, Status & Wardrobe: ${stage.description || c.clothingDetails}]`;
+          }).join('; ')}.`
+        : '';
+
       const clips: Clip[] = (epData.clips || []).map((cData: any) => {
         const rawPrompt = cData.visual_prompt || `Vertical 9:16 cinematic scene for Episode ${epNum} Clip ${cData.clip_number}`;
         
-        // Assemble final prompt: Master Prompt (global direction) + Scene prompt + Locked Characters
+        // Assemble final prompt: Master Prompt (global direction) + Scene prompt + Locked Characters with current stage
         const promptSections: string[] = [];
         if (masterPromptText && masterPromptText.trim()) {
           promptSections.push(`[MASTER PROMPT: ${masterPromptText.trim()}]`);
         }
         promptSections.push(rawPrompt);
-        if (lockedModifier) {
-          promptSections.push(`[${lockedModifier}]`);
+        if (episodeStageContinuity) {
+          promptSections.push(`[${episodeStageContinuity}]`);
         }
         const finalPrompt = promptSections.join(' | ');
 
@@ -966,6 +1132,9 @@ export const DramaProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         updateModelArkConfig,
         checkConnection,
         statusInfo,
+        lastSavedAt,
+        isAutoSaving,
+        forceSaveNow,
       }}
     >
       {children}

@@ -3,6 +3,15 @@ export type GenerationStatus = 'queued' | 'generating' | 'completed' | 'failed';
 
 export type CharacterGender = 'female' | 'male' | 'other';
 
+export interface CharacterStageLook {
+  id: string;
+  url: string;
+  label: string; // e.g. "Look 1 (Poor / Humble Era)", "Look 2 (Rising / Transition)", "Look 3 (Rich / Elite Billionaire)"
+  description?: string; // visual, clothing & ambiance traits specific to this stage (e.g. "tattered clothing, humble stance")
+  fromEpisode?: number; // e.g. 1 (start episode for this stage)
+  toEpisode?: number; // e.g. 20 (end episode for this stage)
+}
+
 export interface Character {
   id: string;
   name: string;
@@ -13,7 +22,9 @@ export interface Character {
   description: string;
   clothingDetails: string;
   visualTraits: string;
-  referenceImageUrl: string;
+  referenceImageUrl: string; // primary reference photo
+  referenceImages?: string[]; // up to 3+ photos for ModelArk visual grounding
+  stageLooks?: CharacterStageLook[]; // detailed stage looks (e.g. poor vs rich)
   voiceStyle: string;
   isLocked: boolean;
 }
@@ -38,6 +49,7 @@ export interface Clip {
   createdAt: number;
   completedAt?: number;
   characterIds?: string[];
+  characterStageOverrides?: Record<string, string>; // characterId -> stageLookId (e.g. 'look_1' for poor, 'look_3' for rich)
   
   // Video Editor adjustments
   trimStart: number;

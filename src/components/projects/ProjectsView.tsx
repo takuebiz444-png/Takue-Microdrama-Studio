@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { useDrama } from '../../context/DramaContext';
+import { useDrama, getCharacterStageForEpisode } from '../../context/DramaContext';
 import { Episode, Clip } from '../../types/drama';
 import {
   Film,
@@ -38,6 +38,7 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({ onOpenCombine }) => 
     downloadClipVideo,
     downloadEpisodeVideo,
     enqueueEpisode,
+    characters,
   } = useDrama();
 
   const [selectedEpFilter, setSelectedEpFilter] = useState<number | 'all'>('all');
@@ -285,6 +286,34 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({ onOpenCombine }) => 
                             >
                               <Edit2 className="w-2.5 h-2.5" />
                             </button>
+                          </div>
+
+                          {/* Active Character Stage Badge (e.g. Poor vs Rich Era) */}
+                          <div className="flex items-center gap-1 flex-wrap mt-0.5">
+                            {characters
+                              .filter((c) => c.isLocked)
+                              .slice(0, 2)
+                              .map((c) => {
+                                const stage = getCharacterStageForEpisode(c, clip.episodeNumber);
+                                return (
+                                  <span
+                                    key={c.id}
+                                    className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-white border border-blue-200 text-[8px] font-bold text-blue-900 shadow-2xs"
+                                    title={`${c.name} is in ${stage.label} (Ep ${stage.fromEpisode}-${stage.toEpisode})`}
+                                  >
+                                    {stage.url && (
+                                      <img
+                                        src={stage.url}
+                                        alt={stage.label}
+                                        className="w-2.5 h-2.5 rounded-full object-cover shrink-0"
+                                      />
+                                    )}
+                                    <span className="truncate max-w-[120px]">
+                                      {c.name}: {stage.label}
+                                    </span>
+                                  </span>
+                                );
+                              })}
                           </div>
 
                           <p className="text-[10px] text-slate-500 truncate max-w-[160px] mt-0.5">

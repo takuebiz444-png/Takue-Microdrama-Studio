@@ -9,6 +9,8 @@ import {
   Film,
   Sparkles,
   Settings as SettingsIcon,
+  Check,
+  Save,
 } from 'lucide-react';
 
 interface NavbarProps {
@@ -33,6 +35,9 @@ export const Navbar: React.FC<NavbarProps> = ({
     isQueueRunning,
     currentProject,
     characters,
+    lastSavedAt,
+    isAutoSaving,
+    forceSaveNow,
   } = useDrama();
 
   const activeQueueCount = queue.filter(
@@ -167,6 +172,27 @@ export const Navbar: React.FC<NavbarProps> = ({
                 {activeQueueCount}
               </span>
             )}
+          </button>
+
+          {/* Auto-Save Status Beacon & Force Save */}
+          <button
+            onClick={forceSaveNow}
+            className={`flex items-center gap-1 px-2 py-1.5 rounded-xl border text-[10px] font-bold transition-all cursor-pointer ${
+              isAutoSaving
+                ? 'bg-amber-50 text-amber-800 border-amber-300 animate-pulse'
+                : 'bg-emerald-50 text-emerald-800 border-emerald-200 hover:bg-emerald-100 active:scale-95'
+            }`}
+            title="Auto-saved continuously to local storage and server. Click to force instant save now."
+          >
+            <span
+              className={`w-1.5 h-1.5 rounded-full ${
+                isAutoSaving ? 'bg-amber-500 animate-ping' : 'bg-emerald-500'
+              }`}
+            />
+            <span className="hidden sm:inline">
+              {isAutoSaving ? 'Saving...' : 'Auto-Saved'}
+            </span>
+            <Check className="w-2.5 h-2.5 sm:hidden" />
           </button>
 
           {/* ModelArk Status Dot */}

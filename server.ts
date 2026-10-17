@@ -22,6 +22,12 @@ if (!fs.existsSync(UPLOAD_DIR)) {
 }
 app.use('/uploads', express.static(UPLOAD_DIR));
 
+const DATA_DIR = path.resolve(__dirname, 'data');
+if (!fs.existsSync(DATA_DIR)) {
+  fs.mkdirSync(DATA_DIR, { recursive: true });
+}
+const STATE_FILE = path.join(DATA_DIR, 'takue_studio_state.json');
+
 // In-memory job store for video generation tasks
 interface VideoJob {
   id: string;
@@ -199,6 +205,66 @@ app.post('/api/upload/character-image', (req, res) => {
   } catch (err: any) {
     console.error('[Upload API] Error saving character image:', err);
     return res.status(500).json({ error: 'Failed to write image file to disk.' });
+  }
+});
+
+// 1d. Auto-Save State Management (Ensures user never loses data across sessions)
+app.get('/api/storage/state', (req, res) => {
+  try {
+    if (fs.existsSync(STATE_FILE)) {
+      const raw = fs.readFileSync(STATE_FILE, 'utf-8');
+      const parsed = JSON.parse(raw);
+      return res.json({
+        success: true,
+        hasSavedState: true,
+        state: parsed,
+        savedAt: parsed._savedAt || fs.statSync(STATE_FILE).mtimeMs,
+      });
+    }
+    return res.json({ success: true, hasSavedState: false, state: null });
+  } catch (err: any) {
+    console.error('[Storage API] Error reading saved state:', err);
+    return res.json({ success: false, hasSavedState: false, error: err.message });
+  }
+});
+
+app.post('/api/storage/state', (req, res) => {
+  try {
+    const { projects, characters, modelArkConfig, currentProjectId, masterPrompt } = req.body;
+    const payload = {
+      projects,
+      characters,
+      modelArkConfig,
+      currentProjectId,
+      masterPrompt,
+      _savedAt: Date.now(),
+      _version: 'v6_stable',
+    };
+    const tempFile = `${STATE_FILE}.tmp`;
+    fs.writeFileSync(tempFile, JSON.stringify(payload, null, 2), 'utf-8');
+    fs.renameSync(tempFile, STATE_FILE);
+    return res.json({
+      success: true,
+      savedAt: payload._savedAt,
+      message: 'Studio state auto-saved successfully.',
+    });
+  } catch (err: any) {
+    console.error('[Storage API] Error saving studio state:', err);
+    return res.status(500).json({ success: false, error: 'Failed to auto-save studio state to disk.' });
+  }
+});
+
+app.get('/api/storage/backup', (req, res) => {
+  try {
+    if (!fs.existsSync(STATE_FILE)) {
+      return res.status(404).json({ error: 'No saved state available to export.' });
+    }
+    res.setHeader('Content-Disposition', `attachment; filename="takue_microdrama_backup_${Date.now()}.json"`);
+    res.setHeader('Content-Type', 'application/json');
+    const fileStream = fs.createReadStream(STATE_FILE);
+    fileStream.pipe(res);
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message });
   }
 });
 
