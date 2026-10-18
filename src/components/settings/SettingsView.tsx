@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import { useDrama } from '../../context/DramaContext';
 import {
   ShieldCheck,
@@ -10,6 +10,11 @@ import {
   Sliders,
   Loader2,
   Zap,
+  HardDrive,
+  Download,
+  Upload,
+  Check,
+  RefreshCw,
 } from 'lucide-react';
 
 export const SettingsView: React.FC = () => {
@@ -17,10 +22,36 @@ export const SettingsView: React.FC = () => {
     modelArkConfig,
     updateModelArkConfig,
     checkConnection,
+    lastSavedAt,
+    isAutoSaving,
+    forceSaveNow,
+    exportBackupJson,
+    importBackupJson,
   } = useDrama();
 
   const [isTesting, setIsTesting] = useState(false);
   const [testResult, setTestResult] = useState<any>(null);
+  const [importStatus, setImportStatus] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const handleFileImport = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      const content = event.target?.result as string;
+      const success = importBackupJson(content);
+      if (success) {
+        setImportStatus('Backup restored successfully!');
+        setTimeout(() => setImportStatus(null), 4000);
+      } else {
+        setImportStatus('Failed to restore: invalid JSON backup format.');
+        setTimeout(() => setImportStatus(null), 4000);
+      }
+    };
+    reader.readAsText(file);
+    if (fileInputRef.current) fileInputRef.current.value = '';
+  };
 
   const handleRunConnectionTest = async () => {
     setIsTesting(true);
@@ -204,6 +235,105 @@ export const SettingsView: React.FC = () => {
             onChange={(e) => updateModelArkConfig({ forceSimulation: e.target.checked })}
             className="w-4 h-4 text-blue-600 rounded-md"
           />
+        </div>
+      </div>
+
+      {/* Auto-Save & Project Backup Protection */}
+      <div className="bg-white border border-blue-200 rounded-2xl p-4 shadow-2xs space-y-3.5">
+        <div className="flex items-center justify-between pb-2 border-b border-slate-100">
+          <div className="flex items-center gap-2">
+            <div className="w-7 h-7 rounded-lg bg-emerald-50 text-emerald-700 flex items-center justify-center border border-emerald-200">
+              <HardDrive className="w-4 h-4" />
+            </div>
+            <div>
+              <h3 className="font-bold text-xs text-blue-950">Continuous Auto-Save & Cloud Backup</h3>
+              <p className="text-[10px] text-slate-500">Dual-layer persistence: Browser + Local Studio File</p>
+            </div>
+          </div>
+
+          <span
+            className={`flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full border ${
+              isAutoSaving
+                ? 'text-amber-800 bg-amber-50 border-amber-300 animate-pulse'
+                : 'text-emerald-800 bg-emerald-50 border-emerald-200'
+            }`}
+          >
+            <span
+              className={`w-1.5 h-1.5 rounded-full ${
+                isAutoSaving ? 'bg-amber-500' : 'bg-emerald-500'
+              }`}
+            />
+            {isAutoSaving ? 'Saving...' : 'Auto-Saved'}
+          </span>
+        </div>
+
+        <div className="text-[11px] text-slate-600 bg-slate-50 p-2.5 rounded-xl border border-slate-200/80 space-y-1">
+          <div className="flex items-center justify-between">
+            <span className="font-medium text-slate-500">Last Synced to Storage:</span>
+            <span className="font-mono font-bold text-blue-950">
+              {lastSavedAt ? new Date(lastSavedAt).toLocaleTimeString() : 'Just now'}
+            </span>
+          </div>
+          <p className="text-[10px] text-slate-500 leading-tight">
+            All character profiles, locked identities, custom prompts, and episode structures are persistently synchronized so you never lose your progress or have to repeat work when returning.
+          </p>
+        </div>
+
+        {importStatus && (
+          <div
+            className={`p-2.5 rounded-xl text-xs font-bold flex items-center gap-1.5 ${
+              importStatus.includes('successfully')
+                ? 'bg-emerald-50 text-emerald-800 border border-emerald-200'
+                : 'bg-rose-50 text-rose-800 border border-rose-200'
+            }`}
+          >
+            {importStatus.includes('successfully') ? (
+              <Check className="w-4 h-4 text-emerald-600 shrink-0" />
+            ) : (
+              <AlertCircle className="w-4 h-4 text-rose-600 shrink-0" />
+            )}
+            <span>{importStatus}</span>
+          </div>
+        )}
+
+        {/* Action Buttons */}
+        <div className="grid grid-cols-2 gap-2 pt-1">
+          <button
+            type="button"
+            onClick={forceSaveNow}
+            disabled={isAutoSaving}
+            className="py-2.5 px-3 bg-blue-50 hover:bg-blue-100 text-blue-800 font-extrabold text-xs rounded-xl border border-blue-200 transition-all cursor-pointer flex items-center justify-center gap-1.5 active:scale-98"
+          >
+            <RefreshCw className={`w-3.5 h-3.5 ${isAutoSaving ? 'animate-spin' : ''}`} />
+            <span>Force Save Now</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={exportBackupJson}
+            className="py-2.5 px-3 bg-blue-600 hover:bg-blue-700 text-white font-extrabold text-xs rounded-xl shadow-xs transition-all cursor-pointer flex items-center justify-center gap-1.5 active:scale-98"
+          >
+            <Download className="w-3.5 h-3.5" />
+            <span>Export Backup JSON</span>
+          </button>
+        </div>
+
+        <div>
+          <input
+            type="file"
+            ref={fileInputRef}
+            onChange={handleFileImport}
+            accept=".json,application/json"
+            className="hidden"
+          />
+          <button
+            type="button"
+            onClick={() => fileInputRef.current?.click()}
+            className="w-full py-2 px-3 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs rounded-xl border border-slate-200 transition-all cursor-pointer flex items-center justify-center gap-1.5"
+          >
+            <Upload className="w-3.5 h-3.5 text-slate-500" />
+            <span>Import / Restore Studio Backup File (.json)</span>
+          </button>
         </div>
       </div>
     </div>

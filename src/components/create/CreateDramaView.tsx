@@ -25,6 +25,8 @@ import {
   ListOrdered,
   Info,
   Palette,
+  Edit2,
+  Check,
 } from 'lucide-react';
 import { formatClipSequenceLabel, getDefaultClipFilename, padNumber } from '../../utils/naming';
 import { Character, CharacterGender, CharacterStageLook, DramaProject } from '../../types/drama';
@@ -41,6 +43,7 @@ export const CreateDramaView: React.FC = () => {
     enqueueEntireProject,
     characters,
     addCharacter,
+    updateCharacter,
     deleteCharacter,
     toggleLockCharacter,
     goToHome,
@@ -79,6 +82,7 @@ export const CreateDramaView: React.FC = () => {
 
   // In-wizard Add Character form state
   const [showAddCharForm, setShowAddCharForm] = useState(false);
+  const [editingCharId, setEditingCharId] = useState<string | null>(null);
   const [newCharName, setNewCharName] = useState('');
   const [newCharGender, setNewCharGender] = useState<CharacterGender>('female');
   const [newCharRole, setNewCharRole] = useState<'protagonist' | 'antagonist' | 'supporting'>('protagonist');
@@ -95,7 +99,48 @@ export const CreateDramaView: React.FC = () => {
   const [createdProject, setCreatedProject] = useState<DramaProject | null>(null);
   const [expandedEp, setExpandedEp] = useState<number>(1);
 
-  // Add character inline inside Step 2
+  const handleOpenEditInline = (char: Character) => {
+    setEditingCharId(char.id);
+    setNewCharName(char.name);
+    setNewCharGender(char.gender || 'female');
+    setNewCharRole(char.role);
+    setNewCharTagline(char.tagline);
+    setNewCharVisuals(char.visualTraits);
+    setNewCharWardrobe(char.clothingDetails);
+    setNewCharImageUrl(char.referenceImageUrl);
+    setNewCharAdditionalImages(char.referenceImages ? char.referenceImages.slice(1) : []);
+    setNewCharStageLooks(
+      char.stageLooks && char.stageLooks.length > 0
+        ? char.stageLooks
+        : [
+            {
+              id: 'look_1',
+              label: 'Look 1: Signature Look',
+              lifestyleTag: 'Everyday',
+              url: char.referenceImageUrl,
+              description: char.clothingDetails || 'Signature wardrobe',
+            },
+          ]
+    );
+    setNewCharLock(char.isLocked);
+    setShowAddCharForm(true);
+  };
+
+  const resetInlineCharForm = () => {
+    setEditingCharId(null);
+    setNewCharName('');
+    setNewCharGender('female');
+    setNewCharTagline('');
+    setNewCharVisuals('');
+    setNewCharWardrobe('');
+    setNewCharImageUrl('');
+    setNewCharAdditionalImages([]);
+    setNewCharStageLooks([]);
+    setNewCharLock(true);
+    setShowAddCharForm(false);
+  };
+
+  // Add or update character inline inside Step 2
   const handleAddInlineCharacter = (e: React.FormEvent) => {
     e.preventDefault();
     if (!newCharName.trim()) {
@@ -111,36 +156,48 @@ export const CreateDramaView: React.FC = () => {
     const chosenImage = newCharImageUrl.trim() || defaultImage;
     const allImages = [chosenImage, ...newCharAdditionalImages].filter(Boolean);
     const finalStageLooks = newCharStageLooks.length > 0 ? newCharStageLooks : [
-      { id: 'look_1', label: 'Poor / Humble Era', url: chosenImage, fromEpisode: 1, toEpisode: 20 },
+      { id: 'look_1', label: 'Look 1: Signature Look', lifestyleTag: 'Everyday', url: chosenImage },
     ];
 
-    const newChar: Character = {
-      id: `char_${Date.now()}`,
-      name: newCharName.trim(),
-      gender: newCharGender,
-      role: newCharRole,
-      tagline: newCharTagline.trim() || `${newCharRole.toUpperCase()} Role`,
-      description: newCharVisuals.trim(),
-      visualTraits: newCharVisuals.trim(),
-      clothingDetails: newCharWardrobe.trim(),
-      referenceImageUrl: chosenImage,
-      referenceImages: allImages,
-      stageLooks: finalStageLooks,
-      voiceStyle: newCharGender === 'female' ? 'Expressive feminine voice' : 'Clear dramatic voice',
-      isLocked: newCharLock,
-    };
+    if (editingCharId) {
+      const existing = characters.find((c) => c.id === editingCharId);
+      if (existing) {
+        updateCharacter({
+          ...existing,
+          name: newCharName.trim(),
+          gender: newCharGender,
+          role: newCharRole,
+          tagline: newCharTagline.trim() || `${newCharRole.toUpperCase()} Role`,
+          description: newCharVisuals.trim(),
+          visualTraits: newCharVisuals.trim(),
+          clothingDetails: newCharWardrobe.trim(),
+          referenceImageUrl: chosenImage,
+          referenceImages: allImages,
+          stageLooks: finalStageLooks,
+          voiceStyle: newCharGender === 'female' ? 'Expressive feminine voice' : 'Clear dramatic voice',
+          isLocked: newCharLock,
+        });
+      }
+    } else {
+      const newChar: Character = {
+        id: `char_${Date.now()}`,
+        name: newCharName.trim(),
+        gender: newCharGender,
+        role: newCharRole,
+        tagline: newCharTagline.trim() || `${newCharRole.toUpperCase()} Role`,
+        description: newCharVisuals.trim(),
+        visualTraits: newCharVisuals.trim(),
+        clothingDetails: newCharWardrobe.trim(),
+        referenceImageUrl: chosenImage,
+        referenceImages: allImages,
+        stageLooks: finalStageLooks,
+        voiceStyle: newCharGender === 'female' ? 'Expressive feminine voice' : 'Clear dramatic voice',
+        isLocked: newCharLock,
+      };
+      addCharacter(newChar);
+    }
 
-    addCharacter(newChar);
-    setNewCharName('');
-    setNewCharGender('female');
-    setNewCharTagline('');
-    setNewCharVisuals('');
-    setNewCharWardrobe('');
-    setNewCharImageUrl('');
-    setNewCharAdditionalImages([]);
-    setNewCharStageLooks([]);
-    setNewCharLock(true);
-    setShowAddCharForm(false);
+    resetInlineCharForm();
   };
 
   const handleApplyTemplateInline = (tmpl: typeof CHARACTER_TEMPLATES[0]) => {
@@ -542,10 +599,10 @@ export const CreateDramaView: React.FC = () => {
               <div className="flex items-center justify-between border-b border-blue-100 pb-2">
                 <span className="text-xs font-extrabold text-blue-950 uppercase tracking-wide flex items-center gap-1">
                   <UserCheck className="w-4 h-4 text-blue-600" />
-                  Add New Character
+                  {editingCharId ? 'Edit Character' : 'Add New Character'}
                 </span>
                 <button
-                  onClick={() => setShowAddCharForm(false)}
+                  onClick={resetInlineCharForm}
                   className="p-1 text-slate-400 hover:text-slate-600 cursor-pointer"
                 >
                   <X className="w-4 h-4" />
@@ -674,12 +731,12 @@ export const CreateDramaView: React.FC = () => {
                   onClick={handleAddInlineCharacter}
                   className="py-2.5 bg-blue-600 hover:bg-blue-700 text-white font-extrabold text-xs rounded-xl shadow-xs cursor-pointer flex items-center justify-center gap-1.5"
                 >
-                  <Lock className="w-3.5 h-3.5" />
-                  <span>Save & Lock</span>
+                  {editingCharId ? <Check className="w-3.5 h-3.5" /> : <Lock className="w-3.5 h-3.5" />}
+                  <span>{editingCharId ? 'Save Changes' : 'Save & Lock'}</span>
                 </button>
                 <button
                   type="button"
-                  onClick={() => setShowAddCharForm(false)}
+                  onClick={resetInlineCharForm}
                   className="py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs rounded-xl cursor-pointer"
                 >
                   Cancel
@@ -752,6 +809,16 @@ export const CreateDramaView: React.FC = () => {
                     </div>
 
                     <div className="flex items-center gap-1.5">
+                      {/* Edit Character Button */}
+                      <button
+                        type="button"
+                        onClick={() => handleOpenEditInline(char)}
+                        className="p-1.5 text-slate-500 hover:text-blue-600 rounded-lg hover:bg-blue-50 cursor-pointer"
+                        title="Edit character info, photos, or scene looks"
+                      >
+                        <Edit2 className="w-3.5 h-3.5" />
+                      </button>
+
                       {/* One tap Lock / Unlock Toggle */}
                       <button
                         type="button"
@@ -1021,7 +1088,7 @@ export const CreateDramaView: React.FC = () => {
               className="flex-[2] py-3.5 bg-blue-600 hover:bg-blue-700 text-white font-extrabold text-xs rounded-2xl shadow-lg transition-all active:scale-98 cursor-pointer flex items-center justify-center gap-2"
             >
               <Play className="w-4 h-4 fill-current" />
-              <span>Start Production Queue</span>
+              <span>Start Production (5 Clips / Batch)</span>
             </button>
           </div>
         </div>

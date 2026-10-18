@@ -119,7 +119,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
               className="w-full flex items-center justify-center gap-2 py-3 bg-white hover:bg-blue-50 text-blue-950 font-extrabold text-xs rounded-2xl shadow-md transition-all active:scale-98 cursor-pointer"
             >
               <Play className="w-4 h-4 fill-current text-blue-600" />
-              Batch Generate All 40 Episodes
+              Batch Generate (5 Clips at a Time)
             </button>
           </div>
         </div>

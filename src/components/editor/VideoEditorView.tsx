@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { useDrama } from '../../context/DramaContext';
+import { useDrama, getCharacterLookForClip } from '../../context/DramaContext';
 import {
   Play,
   Pause,
@@ -16,6 +16,9 @@ import {
   Layers,
   Volume2,
   Zap,
+  Sparkles,
+  UserCheck,
+  Check,
 } from 'lucide-react';
 import { formatClipSequenceLabel, getDefaultClipFilename, padNumber } from '../../utils/naming';
 import { soundFx } from '../../services/soundEffects';
@@ -32,6 +35,8 @@ export const VideoEditorView: React.FC = () => {
     canUndo,
     canRedo,
     downloadClipVideo,
+    characters,
+    setClipCharacterLook,
   } = useDrama();
 
   const [isPlaying, setIsPlaying] = useState<boolean>(false);
@@ -40,7 +45,7 @@ export const VideoEditorView: React.FC = () => {
   const videoRef = useRef<HTMLVideoElement>(null);
 
   // Active tool tab
-  const [activeTool, setActiveTool] = useState<'trim' | 'order' | 'subtitles' | 'audio'>('trim');
+  const [activeTool, setActiveTool] = useState<'trim' | 'order' | 'looks' | 'subtitles' | 'audio'>('trim');
 
   // Subtitle state
   const [subText, setSubText] = useState<string>('');
@@ -223,18 +228,50 @@ export const VideoEditorView: React.FC = () => {
 
         {/* Video Canvas Container */}
         <div className="relative aspect-[9/16] bg-black flex items-center justify-center overflow-hidden">
-          <video
-            ref={videoRef}
-            src={
-              activeClip?.outputVideoUrl ||
-              'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4'
-            }
-            playsInline
-            onTimeUpdate={handleTimeUpdate}
-            onLoadedMetadata={handleLoadedMetadata}
-            onEnded={() => setIsPlaying(false)}
-            className="w-full h-full object-contain"
-          />
+          {activeClip?.outputVideoUrl &&
+          !activeClip.outputVideoUrl.includes('gtv-videos-bucket') &&
+          !activeClip.outputVideoUrl.includes('ForBiggerBlazes') ? (
+            <video
+              ref={videoRef}
+              src={activeClip.outputVideoUrl}
+              playsInline
+              onTimeUpdate={handleTimeUpdate}
+              onLoadedMetadata={handleLoadedMetadata}
+              onEnded={() => setIsPlaying(false)}
+              className="w-full h-full object-contain"
+            />
+          ) : (
+            <div className="p-6 text-center space-y-3 bg-slate-950 text-white w-full h-full flex flex-col items-center justify-center">
+              <div className="w-12 h-12 rounded-2xl bg-amber-500/20 border border-amber-400/30 flex items-center justify-center text-amber-400 animate-pulse">
+                <Sparkles className="w-6 h-6" />
+              </div>
+              <div>
+                <span className="font-extrabold text-sm block">Video Rendering...</span>
+                <span className="text-[11px] text-slate-400 max-w-xs block mt-1">
+                  ModelArk Seedance AI is synthesizing vertical frames. The editor player will activate once the video stream completes.
+                </span>
+              </div>
+              <div className="px-3 py-1 bg-amber-400/10 border border-amber-400/30 rounded-full text-[10px] text-amber-300 font-mono font-bold">
+                Status: Rendering
+              </div>
+            </div>
+          )}
+
+          {/* Active Character Scene Looks Badges Overlay */}
+          <div className="absolute top-2 left-2 right-2 flex items-center gap-1 flex-wrap pointer-events-none">
+            {characters.filter((c) => c.isLocked).map((char) => {
+              const look = getCharacterLookForClip(char, activeClip);
+              return (
+                <span
+                  key={char.id}
+                  className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-slate-950/85 text-white text-[8px] font-bold border border-white/20 backdrop-blur-2xs shadow-xs"
+                >
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 shrink-0" />
+                  <span className="truncate max-w-[130px]">{char.name}: {look.lifestyleTag || look.label}</span>
+                </span>
+              );
+            })}
+          </div>
 
           {/* Subtitle Overlay Preview */}
           {subText && (
@@ -304,7 +341,8 @@ export const VideoEditorView: React.FC = () => {
       {/* Mobile Tool Tabs */}
       <div className="flex items-center justify-between gap-1 border-b border-slate-200 pb-2">
         {[
-          { id: 'trim', label: 'Trim & Split', icon: Scissors },
+          { id: 'trim', label: 'Trim', icon: Scissors },
+          { id: 'looks', label: 'Scene Looks', icon: Sparkles },
           { id: 'order', label: 'Order', icon: Layers },
           { id: 'subtitles', label: 'Subtitles', icon: Type },
           { id: 'audio', label: 'Audio', icon: Music },
@@ -315,10 +353,10 @@ export const VideoEditorView: React.FC = () => {
             <button
               key={t.id}
               onClick={() => setActiveTool(t.id as any)}
-              className={`flex-1 py-1.5 rounded-xl text-[11px] font-bold transition-all cursor-pointer flex items-center justify-center gap-1 ${
+              className={`flex-1 py-1.5 rounded-xl text-[10px] font-bold transition-all cursor-pointer flex items-center justify-center gap-1 ${
                 isActive
                   ? 'bg-blue-600 text-white shadow-xs'
-                  : 'bg-white border border-slate-200 text-slate-700'
+                  : 'bg-white border border-slate-200 text-slate-700 hover:bg-slate-50'
               }`}
             >
               <Icon className="w-3 h-3" />
@@ -365,6 +403,126 @@ export const VideoEditorView: React.FC = () => {
             >
               <Scissors className="w-3.5 h-3.5" /> Split at {currentTime.toFixed(1)}s
             </button>
+          </div>
+        )}
+
+        {/* Tool: Scene Looks (Choose active lifestyle photo per character for this scene) */}
+        {activeTool === 'looks' && (
+          <div className="space-y-3">
+            <div className="flex items-center justify-between">
+              <div>
+                <span className="text-xs font-extrabold text-blue-950 block">
+                  Scene Character Lifestyle & Looks
+                </span>
+                <p className="text-[10px] text-slate-500">
+                  Select which photo and wardrobe applies to Ep {currentEpisode.episodeNumber} Clip {activeClip?.clipNumber}.
+                </p>
+              </div>
+              <span className="text-[9px] font-bold text-blue-700 bg-blue-50 px-2 py-0.5 rounded-full border border-blue-200">
+                Scene Specific
+              </span>
+            </div>
+
+            {characters.length === 0 ? (
+              <div className="p-4 bg-slate-50 border border-slate-200 rounded-xl text-center text-xs text-slate-500">
+                No characters added yet. Go to Character Vault to add characters.
+              </div>
+            ) : (
+              characters.map((char) => {
+                const activeLook = getCharacterLookForClip(char, activeClip);
+                const looks =
+                  char.stageLooks && char.stageLooks.length > 0
+                    ? char.stageLooks.filter((l) => Boolean(l.url))
+                    : [
+                        {
+                          id: 'look_1',
+                          label: 'Look 1: Signature Look',
+                          lifestyleTag: 'Everyday',
+                          url: char.referenceImageUrl,
+                          description: char.clothingDetails,
+                        },
+                      ];
+
+                return (
+                  <div
+                    key={char.id}
+                    className="p-3 bg-slate-50 border border-slate-200 rounded-xl space-y-2.5"
+                  >
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <img
+                          src={activeLook.url || char.referenceImageUrl}
+                          alt={char.name}
+                          className="w-8 h-8 rounded-lg object-cover border border-slate-300 shadow-2xs"
+                        />
+                        <div>
+                          <div className="flex items-center gap-1.5">
+                            <span className="font-extrabold text-xs text-blue-950">{char.name}</span>
+                            <span className="text-[8px] uppercase font-bold px-1.5 py-0.2 rounded-xs bg-blue-100 text-blue-800">
+                              {char.role}
+                            </span>
+                          </div>
+                          <span className="text-[9px] text-slate-600 block">
+                            Active Look: <strong className="text-blue-900">{activeLook.label}</strong>
+                          </span>
+                        </div>
+                      </div>
+
+                      <span className="text-[9px] font-bold text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded-md border border-emerald-200 flex items-center gap-1">
+                        <Check className="w-2.5 h-2.5" />
+                        <span>Grounds Scene</span>
+                      </span>
+                    </div>
+
+                    {/* Look Choices */}
+                    <div className="grid grid-cols-3 gap-1.5 pt-0.5">
+                      {looks.map((look, lIdx) => {
+                        const isCurrent = activeLook.id === look.id;
+                        return (
+                          <button
+                            key={look.id || lIdx}
+                            type="button"
+                            onClick={() => {
+                              if (activeClip) {
+                                setClipCharacterLook(
+                                  currentEpisode.episodeNumber,
+                                  activeClip.clipNumber,
+                                  char.id,
+                                  look.id
+                                );
+                              }
+                            }}
+                            className={`p-1.5 rounded-xl border text-center transition-all cursor-pointer flex flex-col items-center gap-1 ${
+                              isCurrent
+                                ? 'bg-blue-600 text-white border-blue-700 shadow-xs ring-2 ring-blue-300'
+                                : 'bg-white border-slate-200 hover:border-blue-300 text-slate-700'
+                            }`}
+                          >
+                            <div className="w-9 h-9 rounded-lg overflow-hidden border border-white/20">
+                              <img
+                                src={look.url}
+                                alt={look.label}
+                                className="w-full h-full object-cover"
+                              />
+                            </div>
+                            <span className="text-[9px] font-extrabold block truncate w-full">
+                              {look.lifestyleTag || `Look ${lIdx + 1}`}
+                            </span>
+                            <span
+                              className={`text-[8px] truncate w-full ${
+                                isCurrent ? 'text-blue-100' : 'text-slate-400'
+                              }`}
+                            >
+                              {look.label}
+                            </span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                );
+              })
+            )}
           </div>
         )}
 

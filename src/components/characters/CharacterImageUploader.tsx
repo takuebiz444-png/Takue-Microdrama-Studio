@@ -16,6 +16,12 @@ import {
   Sparkle,
   Shirt,
   Eye,
+  Tag,
+  Briefcase,
+  Moon,
+  Sun,
+  Shield,
+  HelpCircle,
 } from 'lucide-react';
 import {
   CURATED_FEMALE_PORTRAITS,
@@ -69,6 +75,17 @@ const compressImageFile = (file: File, maxDim = 800, quality = 0.85): Promise<st
   });
 };
 
+const LIFESTYLE_TAG_OPTIONS = [
+  'Everyday',
+  'Work / Job',
+  'Night Life',
+  'Undercover',
+  'Action / Tactical',
+  'Formal / Gala',
+  'Home / Relaxed',
+  'Disguise',
+];
+
 export const CharacterImageUploader: React.FC<CharacterImageUploaderProps> = ({
   imageUrl,
   onChangeImageUrl,
@@ -79,54 +96,50 @@ export const CharacterImageUploader: React.FC<CharacterImageUploaderProps> = ({
   gender,
   onChangeGender,
 }) => {
-  // Active slot index for uploading: 0 = Look 1 (e.g. Poor), 1 = Look 2 (Rising), 2 = Look 3 (Rich)
+  // Active slot index for uploading: 0 = Look 1, 1 = Look 2, 2 = Look 3
   const [activeSlot, setActiveSlot] = useState<number>(0);
   const [isUploading, setIsUploading] = useState(false);
   const [showUrlInput, setShowUrlInput] = useState(false);
   const [customUrl, setCustomUrl] = useState('');
   const [uploadError, setUploadError] = useState<string | null>(null);
-  const [showStageDetails, setShowStageDetails] = useState<boolean>(true);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // Default labels and ranges for the 3 stages
-  const DEFAULT_STAGES: CharacterStageLook[] = [
+  // Flexible default lifestyle scene looks (not locked to poor or rich!)
+  const DEFAULT_LOOKS: CharacterStageLook[] = [
     {
       id: 'look_1',
-      label: 'Poor / Humble Era',
+      label: 'Look 1: Everyday / Signature Lifestyle',
+      lifestyleTag: 'Everyday',
       url: imageUrl || '',
-      description: 'Worn, humble everyday clothing, modest demeanor, impoverished lifestyle',
-      fromEpisode: 1,
-      toEpisode: 20,
+      description: 'Standard daily wardrobe, signature appearance, and primary demeanor',
     },
     {
       id: 'look_2',
-      label: 'Rising / Transformation Era',
+      label: 'Look 2: Secondary / Alternate Lifestyle',
+      lifestyleTag: 'Night Life',
       url: additionalImages[0] || '',
-      description: 'Clean working attire, determined posture, transitional wardrobe',
-      fromEpisode: 21,
-      toEpisode: 30,
+      description: 'Alternate lifestyle outfit (e.g. night persona, work attire, or undercover disguise)',
     },
     {
       id: 'look_3',
-      label: 'Rich / Elite Billionaire Era',
+      label: 'Look 3: Special Scene / Event Look',
+      lifestyleTag: 'Formal / Gala',
       url: additionalImages[1] || '',
-      description: 'Tailored luxury suit / designer dress, expensive jewelry, affluent commanding posture',
-      fromEpisode: 31,
-      toEpisode: 40,
+      description: 'Special scene look (e.g. high-stakes event, action encounter, or transformation climax)',
     },
   ];
 
   // Build current 3 slots representation
   const slot0: CharacterStageLook = stageLooks[0] || {
-    ...DEFAULT_STAGES[0],
+    ...DEFAULT_LOOKS[0],
     url: imageUrl,
   };
   const slot1: CharacterStageLook = stageLooks[1] || {
-    ...DEFAULT_STAGES[1],
+    ...DEFAULT_LOOKS[1],
     url: additionalImages[0] || '',
   };
   const slot2: CharacterStageLook = stageLooks[2] || {
-    ...DEFAULT_STAGES[2],
+    ...DEFAULT_LOOKS[2],
     url: additionalImages[1] || '',
   };
 
@@ -149,10 +162,9 @@ export const CharacterImageUploader: React.FC<CharacterImageUploaderProps> = ({
     updated[slotIndex] = {
       ...updated[slotIndex],
       url: newUrl,
-      label: updated[slotIndex]?.label || DEFAULT_STAGES[slotIndex].label,
-      fromEpisode: updated[slotIndex]?.fromEpisode ?? DEFAULT_STAGES[slotIndex].fromEpisode,
-      toEpisode: updated[slotIndex]?.toEpisode ?? DEFAULT_STAGES[slotIndex].toEpisode,
-      description: updated[slotIndex]?.description || DEFAULT_STAGES[slotIndex].description,
+      label: updated[slotIndex]?.label || DEFAULT_LOOKS[slotIndex].label,
+      lifestyleTag: updated[slotIndex]?.lifestyleTag || DEFAULT_LOOKS[slotIndex].lifestyleTag,
+      description: updated[slotIndex]?.description || DEFAULT_LOOKS[slotIndex].description,
     };
     updateSlots(updated);
   };
@@ -175,13 +187,41 @@ export const CharacterImageUploader: React.FC<CharacterImageUploaderProps> = ({
     updateSlots(updated);
   };
 
-  const handleApplyPoorToRichPreset = () => {
+  // Lifestyle Preset Presets
+  const applyPreset = (presetType: 'dual_lifestyle' | 'action_espionage' | 'corporate_casual' | 'evolution') => {
+    let presets: { label: string; lifestyleTag: string; description: string }[] = [];
+
+    if (presetType === 'dual_lifestyle') {
+      presets = [
+        { label: 'Look 1: Day Job / Public Life', lifestyleTag: 'Work / Job', description: 'Clean modest professional attire, polite demeanor, everyday work life' },
+        { label: 'Look 2: Night Life / Secret Persona', lifestyleTag: 'Night Life', description: 'Sleek dark nighttime outfit, sharp confident demeanor, secret lifestyle' },
+        { label: 'Look 3: Undercover / Disguise', lifestyleTag: 'Undercover', description: 'Casual street disguise, cap or dark jacket, stealth inconspicuous look' },
+      ];
+    } else if (presetType === 'action_espionage') {
+      presets = [
+        { label: 'Look 1: Civilian Casual', lifestyleTag: 'Everyday', description: 'Relaxed casual streetwear, natural everyday appearance' },
+        { label: 'Look 2: Tactical / Action', lifestyleTag: 'Action / Tactical', description: 'Dark tactical utility outfit, combat boots, intense alert posture' },
+        { label: 'Look 3: High-Society Gala', lifestyleTag: 'Formal / Gala', description: 'Bespoke evening formalwear, elegant styling, luxury presence' },
+      ];
+    } else if (presetType === 'corporate_casual') {
+      presets = [
+        { label: 'Look 1: Executive Office', lifestyleTag: 'Work / Job', description: 'Tailored business suit/blazer, professional corporate presence' },
+        { label: 'Look 2: Off-Duty Casual', lifestyleTag: 'Everyday', description: 'Comfortable relaxed casual clothing, informal friendly posture' },
+        { label: 'Look 3: Boardroom Climax', lifestyleTag: 'Formal / Gala', description: 'Impeccable power suit, luxury watch, commanding authoritative demeanor' },
+      ];
+    } else {
+      presets = [
+        { label: 'Look 1: Early Journey', lifestyleTag: 'Everyday', description: 'Simple humble attire, starting life phase' },
+        { label: 'Look 2: Transformation', lifestyleTag: 'Work / Job', description: 'Transitional modern wardrobe, rising determination' },
+        { label: 'Look 3: Peak Status', lifestyleTag: 'Formal / Gala', description: 'Distinguished styling, high-status commanding presence' },
+      ];
+    }
+
     const updated = currentSlots.map((slot, idx) => ({
       ...slot,
-      label: DEFAULT_STAGES[idx].label,
-      description: DEFAULT_STAGES[idx].description,
-      fromEpisode: DEFAULT_STAGES[idx].fromEpisode,
-      toEpisode: DEFAULT_STAGES[idx].toEpisode,
+      label: presets[idx].label,
+      lifestyleTag: presets[idx].lifestyleTag,
+      description: presets[idx].description,
     }));
     updateSlots(updated);
   };
@@ -257,7 +297,7 @@ export const CharacterImageUploader: React.FC<CharacterImageUploaderProps> = ({
         <label className="block text-xs font-bold text-slate-800 mb-1.5 flex items-center justify-between">
           <span>Character Gender *</span>
           <span className="text-[10px] font-normal text-slate-500">
-            Enforces strict female/male consistency across all 40 episodes
+            Enforces strict female/male consistency across all scenes
           </span>
         </label>
         <div className="grid grid-cols-3 gap-2">
@@ -319,41 +359,69 @@ export const CharacterImageUploader: React.FC<CharacterImageUploaderProps> = ({
         </div>
       </div>
 
-      {/* 2. Multi-Picture Stage Looks (Up to 3 Pictures: e.g. Poor vs Rich Era) */}
+      {/* 2. Scene Looks & Lifestyles (Up to 3 Photos: e.g. Day Job vs Night Secret, Casual vs Formal) */}
       <div className="space-y-2">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-1.5">
             <Layers className="w-4 h-4 text-blue-600" />
             <span className="text-xs font-extrabold text-blue-950">
-              Character Evolution Pictures (Up to 3 Stages: Poor vs Rich)
+              Character Scene Looks & Lifestyles (Up to 3 Photos)
             </span>
           </div>
-          <div className="flex items-center gap-2">
-            <button
-              type="button"
-              onClick={handleApplyPoorToRichPreset}
-              className="text-[10px] font-bold text-amber-700 bg-amber-50 hover:bg-amber-100 border border-amber-200 px-2 py-0.5 rounded-lg flex items-center gap-1 cursor-pointer"
-              title="Apply Poor to Rich life transformation stages"
-            >
-              <Sparkle className="w-2.5 h-2.5 text-amber-600" />
-              <span>'Poor to Rich' Preset</span>
-            </button>
-            <span className="text-[10px] font-mono font-bold bg-blue-100 text-blue-800 px-2 py-0.5 rounded-full">
-              {filledImagesCount} of 3 Pictures
-            </span>
-          </div>
+          <span className="text-[10px] font-mono font-bold bg-blue-100 text-blue-800 px-2 py-0.5 rounded-full">
+            {filledImagesCount} of 3 Attached
+          </span>
         </div>
 
         <p className="text-[11px] text-slate-600 leading-tight">
-          Upload 3 pictures showing this character across their life story (e.g. <strong>Picture 1: When Poor / Beggar</strong>, <strong>Picture 2: Rising</strong>, and <strong>Picture 3: When Rich / Billionaire</strong>). When generating videos, ModelArk uses the matching picture and prompt for each episode!
+          Add up to 3 photos of this character for different lifestyles, outfits, or settings (e.g. <strong>Day Job vs Night Secret</strong>, <strong>Casual vs Formal</strong>, or <strong>Undercover</strong>). In any episode or clip, you can select which look this character wears!
         </p>
+
+        {/* Quick Lifestyle Preset Buttons */}
+        <div className="flex items-center gap-1.5 overflow-x-auto pb-1 pt-0.5">
+          <span className="text-[10px] font-bold text-slate-400 shrink-0 uppercase tracking-wider">
+            Quick Lifestyles:
+          </span>
+          <button
+            type="button"
+            onClick={() => applyPreset('dual_lifestyle')}
+            className="shrink-0 text-[10px] font-bold text-blue-700 bg-blue-50 hover:bg-blue-100 border border-blue-200 px-2.5 py-1 rounded-lg flex items-center gap-1 cursor-pointer"
+          >
+            <Moon className="w-2.5 h-2.5 text-blue-600" />
+            <span>Dual Lifestyle (Day Job & Night Secret)</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => applyPreset('action_espionage')}
+            className="shrink-0 text-[10px] font-bold text-indigo-700 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 px-2.5 py-1 rounded-lg flex items-center gap-1 cursor-pointer"
+          >
+            <Shield className="w-2.5 h-2.5 text-indigo-600" />
+            <span>Action & Espionage</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => applyPreset('corporate_casual')}
+            className="shrink-0 text-[10px] font-bold text-teal-700 bg-teal-50 hover:bg-teal-100 border border-teal-200 px-2.5 py-1 rounded-lg flex items-center gap-1 cursor-pointer"
+          >
+            <Briefcase className="w-2.5 h-2.5 text-teal-600" />
+            <span>Executive & Casual</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => applyPreset('evolution')}
+            className="shrink-0 text-[10px] font-bold text-amber-700 bg-amber-50 hover:bg-amber-100 border border-amber-200 px-2.5 py-1 rounded-lg flex items-center gap-1 cursor-pointer"
+          >
+            <Sparkle className="w-2.5 h-2.5 text-amber-600" />
+            <span>Life Journey / Transformation</span>
+          </button>
+        </div>
 
         {/* 3 Interactive Cards for the 3 Pictures */}
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 pt-1">
           {currentSlots.map((slot, index) => {
             const hasImage = Boolean(slot.url);
             const isSelected = activeSlot === index;
-            const defaultLabel = DEFAULT_STAGES[index].label;
+            const defaultLabel = DEFAULT_LOOKS[index].label;
 
             return (
               <div
@@ -365,17 +433,17 @@ export const CharacterImageUploader: React.FC<CharacterImageUploaderProps> = ({
                     : 'border-slate-200 bg-slate-50/70 hover:border-slate-300'
                 }`}
               >
-                {/* Stage Header & Label */}
+                {/* Look Header & Tag */}
                 <div className="flex items-center justify-between gap-1">
                   <span className={`text-[9px] font-mono font-extrabold px-1.5 py-0.5 rounded-md border ${
-                    index === 0 ? 'bg-amber-50 text-amber-800 border-amber-200' :
-                    index === 1 ? 'bg-blue-50 text-blue-800 border-blue-200' :
-                    'bg-emerald-50 text-emerald-800 border-emerald-200'
+                    index === 0 ? 'bg-blue-50 text-blue-800 border-blue-200' :
+                    index === 1 ? 'bg-purple-50 text-purple-800 border-purple-200' :
+                    'bg-amber-50 text-amber-800 border-amber-200'
                   }`}>
-                    Pic {index + 1}: {index === 0 ? 'Poor' : index === 1 ? 'Rising' : 'Rich'}
+                    Photo {index + 1}
                   </span>
-                  <span className="text-[9px] font-bold text-slate-500 font-mono">
-                    Ep {slot.fromEpisode ?? DEFAULT_STAGES[index].fromEpisode}–{slot.toEpisode ?? DEFAULT_STAGES[index].toEpisode}
+                  <span className="text-[9px] font-bold text-slate-500 bg-slate-100 px-1.5 py-0.5 rounded-md truncate max-w-[110px]">
+                    {slot.lifestyleTag || (index === 0 ? 'Everyday' : index === 1 ? 'Alternate' : 'Special')}
                   </span>
                 </div>
 
@@ -385,7 +453,7 @@ export const CharacterImageUploader: React.FC<CharacterImageUploaderProps> = ({
                   onClick={(e) => e.stopPropagation()}
                   onChange={(e) => handleSetSlotField(index, 'label', e.target.value)}
                   placeholder={defaultLabel}
-                  className="text-[11px] font-bold text-slate-900 bg-white border border-slate-200 rounded-md px-1.5 py-1 focus:border-blue-500 focus:outline-hidden w-full"
+                  className="text-[11px] font-bold text-slate-900 bg-white border border-slate-200 rounded-md px-1.5 py-1 focus:border-blue-500 focus:outline-hidden w-full truncate"
                 />
 
                 {/* Picture Preview or Upload Trigger */}
@@ -422,7 +490,7 @@ export const CharacterImageUploader: React.FC<CharacterImageUploaderProps> = ({
                     </div>
 
                     <span className="absolute bottom-1 left-1 right-1 bg-slate-950/75 text-white text-[9px] font-semibold px-1.5 py-0.5 rounded-md truncate backdrop-blur-xs text-center">
-                      {slot.label || `Pic ${index + 1}`}
+                      {slot.label || `Photo ${index + 1}`}
                     </span>
                   </div>
                 ) : (
@@ -437,14 +505,14 @@ export const CharacterImageUploader: React.FC<CharacterImageUploaderProps> = ({
                       <Upload className="w-3.5 h-3.5" />
                     </div>
                     <span className="text-[10px] font-extrabold text-blue-950 block leading-tight">
-                      + Add Picture {index + 1}
+                      + Add Photo {index + 1}
                     </span>
                     <span className="text-[8px] text-slate-500 block mt-0.5">
                       {index === 0
-                        ? 'e.g. When Poor'
+                        ? 'Everyday Outfit'
                         : index === 1
-                        ? 'e.g. Transformation'
-                        : 'e.g. When Rich'}
+                        ? 'Alternate Lifestyle'
+                        : 'Special Scene Look'}
                     </span>
                   </div>
                 )}
@@ -472,63 +540,54 @@ export const CharacterImageUploader: React.FC<CharacterImageUploaderProps> = ({
           })}
         </div>
 
-        {/* Active Stage Details (Wardrobe & Episode Range) */}
+        {/* Active Look Details (Wardrobe, Demeanor & Lifestyle Category) */}
         <div className="p-3 bg-white border border-blue-200 rounded-2xl shadow-2xs space-y-2 mt-2">
           <div className="flex items-center justify-between">
             <span className="text-[11px] font-extrabold text-blue-950 flex items-center gap-1.5">
               <Shirt className="w-3.5 h-3.5 text-blue-600" />
-              <span>Details for Picture {activeSlot + 1} ({activeSlotData.label})</span>
+              <span>Details for Photo {activeSlot + 1} ({activeSlotData.label})</span>
             </span>
             <span className="text-[10px] text-blue-700 font-bold">
-              Injected into ModelArk Prompts
+              Applied whenever this look is selected
             </span>
           </div>
 
-          <div className="grid grid-cols-2 gap-2">
-            <div>
-              <label className="block text-[10px] font-bold text-slate-600 mb-0.5">
-                Start Episode
-              </label>
-              <input
-                type="number"
-                min="1"
-                max="40"
-                value={activeSlotData.fromEpisode ?? DEFAULT_STAGES[activeSlot].fromEpisode}
-                onChange={(e) =>
-                  handleSetSlotField(activeSlot, 'fromEpisode', parseInt(e.target.value, 10) || 1)
-                }
-                className="w-full text-xs font-semibold px-2.5 py-1.5 bg-slate-50 border border-slate-200 rounded-lg focus:ring-1 focus:ring-blue-500 focus:outline-hidden"
-              />
-            </div>
-
-            <div>
-              <label className="block text-[10px] font-bold text-slate-600 mb-0.5">
-                End Episode
-              </label>
-              <input
-                type="number"
-                min="1"
-                max="40"
-                value={activeSlotData.toEpisode ?? DEFAULT_STAGES[activeSlot].toEpisode}
-                onChange={(e) =>
-                  handleSetSlotField(activeSlot, 'toEpisode', parseInt(e.target.value, 10) || 40)
-                }
-                className="w-full text-xs font-semibold px-2.5 py-1.5 bg-slate-50 border border-slate-200 rounded-lg focus:ring-1 focus:ring-blue-500 focus:outline-hidden"
-              />
+          <div>
+            <label className="block text-[10px] font-bold text-slate-600 mb-1">
+              Lifestyle Category
+            </label>
+            <div className="flex items-center gap-1.5 flex-wrap">
+              {LIFESTYLE_TAG_OPTIONS.map((tag) => (
+                <button
+                  key={tag}
+                  type="button"
+                  onClick={() => handleSetSlotField(activeSlot, 'lifestyleTag', tag)}
+                  className={`px-2 py-0.5 rounded-lg text-[10px] font-bold transition-all cursor-pointer ${
+                    activeSlotData.lifestyleTag === tag
+                      ? 'bg-blue-600 text-white shadow-2xs'
+                      : 'bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-200'
+                  }`}
+                >
+                  {tag}
+                </button>
+              ))}
             </div>
           </div>
 
           <div>
             <label className="block text-[10px] font-bold text-slate-600 mb-0.5">
-              Appearance, Clothes & Status Details for this Picture (Poor vs Rich)
+              Outfit, Demeanor & Scene Atmosphere for Photo {activeSlot + 1}
             </label>
             <input
               type="text"
               value={activeSlotData.description || ''}
               onChange={(e) => handleSetSlotField(activeSlot, 'description', e.target.value)}
-              placeholder={DEFAULT_STAGES[activeSlot].description}
+              placeholder="e.g. Tailored midnight-navy suit, sharp composed gaze, formal upscale setting"
               className="w-full text-xs font-medium px-2.5 py-1.5 bg-slate-50 border border-slate-200 rounded-lg focus:ring-1 focus:ring-blue-500 focus:outline-hidden"
             />
+            <p className="text-[9px] text-slate-400 mt-1">
+              💡 Works for any scene or episode. You can freely assign this photo to any clip in the Video Editor & Episode Library.
+            </p>
           </div>
         </div>
 
@@ -561,7 +620,7 @@ export const CharacterImageUploader: React.FC<CharacterImageUploaderProps> = ({
         <div className="flex items-center justify-between">
           <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500 flex items-center gap-1">
             <Sparkles className="w-3 h-3 text-amber-500" />
-            <span>Curated Portraits For Picture {activeSlot + 1} ({activeSlotData.label})</span>
+            <span>Curated Portraits For Photo {activeSlot + 1} ({activeSlotData.label})</span>
           </span>
           <button
             type="button"

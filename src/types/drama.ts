@@ -1,15 +1,16 @@
 export type ActiveTabType = 'dashboard' | 'characters' | 'create' | 'projects' | 'editor' | 'settings';
-export type GenerationStatus = 'queued' | 'generating' | 'completed' | 'failed';
+export type GenerationStatus = 'queued' | 'generating' | 'rendering' | 'completed' | 'failed';
 
 export type CharacterGender = 'female' | 'male' | 'other';
 
 export interface CharacterStageLook {
   id: string;
   url: string;
-  label: string; // e.g. "Look 1 (Poor / Humble Era)", "Look 2 (Rising / Transition)", "Look 3 (Rich / Elite Billionaire)"
-  description?: string; // visual, clothing & ambiance traits specific to this stage (e.g. "tattered clothing, humble stance")
-  fromEpisode?: number; // e.g. 1 (start episode for this stage)
-  toEpisode?: number; // e.g. 20 (end episode for this stage)
+  label: string; // e.g. "Everyday / Day Job", "Night Life / Secret Persona", "Formal / Gala", or custom lifestyle
+  lifestyleTag?: string; // e.g. "Everyday", "Night Life", "Undercover", "Formal", "Action", "Work"
+  description?: string; // visual, clothing & scene traits specific to this lifestyle or look
+  fromEpisode?: number; // optional guideline range
+  toEpisode?: number;
 }
 
 export interface Character {
@@ -59,6 +60,14 @@ export interface Clip {
   volume: number; // 0 to 1
 }
 
+export interface EpisodeFolder {
+  id: string;
+  name: string;
+  color?: string; // e.g. 'blue', 'amber', 'emerald', 'purple', 'rose', 'indigo'
+  description?: string;
+  createdAt: number;
+}
+
 export interface Episode {
   episodeNumber: number;
   title: string;
@@ -68,6 +77,8 @@ export interface Episode {
   combinedVideoUrl?: string;
   combinedFilename?: string; // e.g., "Takue_Microdrama_Episode_001.mp4"
   combinedAt?: number;
+  folderId?: string; // ID of the folder where this episode is stored
+  folderName?: string; // Cached display name of the folder
 }
 
 export interface DramaProject {
@@ -83,6 +94,7 @@ export interface DramaProject {
   orientation: '9:16' | '16:9';
   selectedModel: string;
   tone: string;
+  folders?: EpisodeFolder[]; // Folders created in this series for organizing episodes
   episodes: Episode[];
   createdAt: number;
   updatedAt: number;
@@ -113,6 +125,7 @@ export interface QueueJob {
   startedAt?: number;
   error?: string;
   retryCount: number;
+  characterStageOverrides?: Record<string, string>; // characterId -> lookId for scene-specific lifestyle
 }
 
 export interface ModelArkConfig {

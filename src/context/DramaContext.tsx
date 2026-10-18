@@ -1,4 +1,5 @@
 import React, { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react';
+import JSZip from 'jszip';
 import {
   DramaProject,
   Episode,
@@ -8,6 +9,7 @@ import {
   ModelArkConfig,
   GenerationStatus,
   ActiveTabType,
+  EpisodeFolder,
 } from '../types/drama';
 import { DEFAULT_CHARACTERS } from '../data/defaultCharacters';
 import { DEFAULT_MASTER_PROMPT } from '../data/masterPrompts';
@@ -86,83 +88,165 @@ interface DramaContextType {
   // Combine Episode
   markEpisodeCombined: (episodeNumber: number, videoUrl: string, filename: string) => void;
 
+  // Episodes & Series Folder Organization
+  deleteEpisode: (projectId: string, episodeNumber: number) => void;
+  deleteEpisodes: (projectId: string, episodeNumbers: number[]) => void;
+  addEpisode: (projectId: string, folderId?: string) => Episode;
+  createFolder: (projectId: string, name: string, color?: string, description?: string) => EpisodeFolder;
+  renameFolder: (projectId: string, folderId: string, newName: string) => void;
+  deleteFolder: (projectId: string, folderId: string) => void;
+  moveEpisodeToFolder: (projectId: string, episodeNumber: number, folderId?: string) => void;
+  moveEpisodesToFolder: (projectId: string, episodeNumbers: number[], folderId?: string) => void;
+  exportFolderZip: (projectId: string, folderId?: string) => Promise<void>;
+
   // Settings & ModelArk
   modelArkConfig: ModelArkConfig;
   updateModelArkConfig: (updates: Partial<ModelArkConfig>) => void;
   checkConnection: () => Promise<any>;
   statusInfo: ModelArkStatusResponse | null;
-
-  // Auto-Save
+  // Auto-Save & Backup
   lastSavedAt: number | null;
   isAutoSaving: boolean;
   forceSaveNow: () => Promise<void>;
+  exportBackupJson: () => void;
+  importBackupJson: (jsonString: string) => boolean;
+
+  // Scene Lifestyle Looks
+  setClipCharacterLook: (episodeNumber: number, clipNumber: number, characterId: string, lookId: string) => void;
 }
 
 const DramaContext = createContext<DramaContextType | null>(null);
 
-const STORAGE_KEY_PROJECTS = 'takue_microdrama_projects_v6';
-const STORAGE_KEY_CHARS = 'takue_microdrama_characters_v6';
-const STORAGE_KEY_CONFIG = 'takue_microdrama_config_v6';
+const STORAGE_KEYS_PROJECTS = [
+  'takue_microdrama_projects_v6',
+  'takue_microdrama_projects_v5',
+  'takue_microdrama_projects_v4',
+  'takue_microdrama_projects_v3',
+  'takue_microdrama_projects',
+  'microdrama_projects',
+];
+
+const STORAGE_KEYS_CHARS = [
+  'takue_microdrama_characters_v6',
+  'takue_microdrama_characters_v5',
+  'takue_microdrama_characters_v4',
+  'takue_microdrama_characters_v3',
+  'takue_microdrama_characters',
+  'microdrama_characters',
+];
+
+const STORAGE_KEYS_CONFIG = [
+  'takue_microdrama_config_v6',
+  'takue_microdrama_config_v5',
+  'takue_microdrama_config',
+];
+
+export const getCharacterLookForClip = (
+  char: Character,
+  clip?: { characterStageOverrides?: Record<string, string>; episodeNumber?: number }
+): { id: string; label: string; description: string; url: string; lifestyleTag?: string } => {
+  const lookOverrideId = clip?.characterStageOverrides?.[char.id];
+
+  if (char.stageLooks && char.stageLooks.length > 0) {
+    const validLooks = char.stageLooks.filter((l) => Boolean(l.url && l.url.trim()));
+    if (validLooks.length > 0) {
+      // 1. If clip has a specific lifestyle look selected for this character
+      if (lookOverrideId) {
+        const found = validLooks.find((l) => l.id === lookOverrideId);
+        if (found) {
+          return {
+            id: found.id,
+            label: found.label || 'Selected Scene Look',
+            description: found.description || char.clothingDetails || char.visualTraits,
+            url: found.url,
+            lifestyleTag: found.lifestyleTag,
+          };
+        }
+      }
+
+      // 2. If look has specific optional episode range
+      if (clip?.episodeNumber) {
+        const matched = validLooks.find((l) => {
+          if (!l.fromEpisode || !l.toEpisode) return false;
+          return clip.episodeNumber! >= l.fromEpisode && clip.episodeNumber! <= l.toEpisode;
+        });
+        if (matched) {
+          return {
+            id: matched.id,
+            label: matched.label,
+            description: matched.description || char.clothingDetails,
+            url: matched.url,
+            lifestyleTag: matched.lifestyleTag,
+          };
+        }
+      }
+
+      // 3. Default to primary look
+      const primary = validLooks[0];
+      return {
+        id: primary.id,
+        label: primary.label || 'Primary Look',
+        description: primary.description || char.clothingDetails,
+        url: primary.url,
+        lifestyleTag: primary.lifestyleTag,
+      };
+    }
+  }
+
+  // Fallback to primary character photo
+  return {
+    id: 'primary',
+    label: 'Primary Appearance',
+    description: char.clothingDetails || 'Signature wardrobe and visual styling',
+    url: char.referenceImageUrl,
+  };
+};
 
 export const getCharacterStageForEpisode = (
   char: Character,
   episodeNumber: number
-): { id: string; label: string; description: string; url: string; fromEpisode: number; toEpisode: number } => {
-  if (char.stageLooks && char.stageLooks.length > 0) {
-    const validLooks = char.stageLooks.filter((l) => Boolean(l.url && l.url.trim()));
-    if (validLooks.length > 0) {
-      // Find range match
-      const matched = validLooks.find((l) => {
-        const from = l.fromEpisode ?? 1;
-        const to = l.toEpisode ?? 40;
-        return episodeNumber >= from && episodeNumber <= to;
-      });
-      if (matched) {
-        return {
-          id: matched.id,
-          label: matched.label || (episodeNumber <= 20 ? 'Poor / Humble Era' : 'Rich / Elite Billionaire Era'),
-          description: matched.description || char.clothingDetails || char.visualTraits,
-          url: matched.url,
-          fromEpisode: matched.fromEpisode ?? 1,
-          toEpisode: matched.toEpisode ?? 40,
-        };
-      }
-      // If no exact episode match, choose based on halfway progression
-      if (episodeNumber <= 20) {
-        const first = validLooks[0];
-        return {
-          id: first.id,
-          label: first.label || 'Poor / Humble Era',
-          description: first.description || char.clothingDetails,
-          url: first.url,
-          fromEpisode: first.fromEpisode ?? 1,
-          toEpisode: first.toEpisode ?? 20,
-        };
-      } else {
-        const last = validLooks[validLooks.length - 1];
-        return {
-          id: last.id,
-          label: last.label || 'Rich / Elite Billionaire Era',
-          description: last.description || char.clothingDetails,
-          url: last.url,
-          fromEpisode: last.fromEpisode ?? 21,
-          toEpisode: last.toEpisode ?? 40,
-        };
-      }
-    }
-  }
-
-  // Fallback if no stage looks attached
-  const isPoorEra = episodeNumber <= 20;
+): { id: string; label: string; description: string; url: string; fromEpisode?: number; toEpisode?: number } => {
+  const look = getCharacterLookForClip(char, { episodeNumber });
   return {
-    id: isPoorEra ? 'look_1' : 'look_3',
-    label: isPoorEra ? 'Poor / Humble Era' : 'Rich / Elite Billionaire Era',
-    description: char.clothingDetails || (isPoorEra ? 'Humble worn clothing, impoverished lifestyle' : 'Tailored luxury suit, elite status'),
-    url: char.referenceImageUrl,
-    fromEpisode: isPoorEra ? 1 : 21,
-    toEpisode: isPoorEra ? 20 : 40,
+    ...look,
+    fromEpisode: 1,
+    toEpisode: 40,
   };
 };
+
+// Helper: Sanitize projects to purge any legacy placeholder sample URLs and ensure proper rendering status
+function sanitizeProjects(projs: DramaProject[]): DramaProject[] {
+  if (!Array.isArray(projs)) return [];
+  return projs.map((p) => ({
+    ...p,
+    folders: Array.isArray(p.folders) ? p.folders : [],
+    episodes: (p.episodes || []).map((ep) => ({
+      ...ep,
+      folderId: ep.folderId || undefined,
+      folderName: ep.folderName || undefined,
+      combinedVideoUrl:
+        ep.combinedVideoUrl &&
+        (ep.combinedVideoUrl.includes('gtv-videos-bucket') || ep.combinedVideoUrl.includes('ForBiggerBlazes'))
+          ? undefined
+          : ep.combinedVideoUrl,
+      clips: (ep.clips || []).map((clip) => {
+        const isPlaceholder =
+          clip.outputVideoUrl &&
+          (clip.outputVideoUrl.includes('gtv-videos-bucket') || clip.outputVideoUrl.includes('ForBiggerBlazes'));
+        const outputVideoUrl = isPlaceholder ? undefined : clip.outputVideoUrl;
+        const generationStatus: GenerationStatus =
+          clip.generationStatus === 'completed' && !outputVideoUrl
+            ? 'rendering'
+            : clip.generationStatus;
+        return {
+          ...clip,
+          outputVideoUrl,
+          generationStatus,
+        };
+      }),
+    })),
+  }));
+}
 
 export const DramaProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [activeTab, setActiveTab] = useState<ActiveTabType>('dashboard');
@@ -179,24 +263,28 @@ export const DramaProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const goToEditor = useCallback(() => setActiveTab('editor'), []);
   const goToSettings = useCallback(() => setActiveTab('settings'), []);
 
-  // Load or initialize characters - start clean with no personal names!
+  // Load or initialize characters across any storage version or session
   const [characters, setCharacters] = useState<Character[]>(() => {
-    try {
-      const saved = localStorage.getItem(STORAGE_KEY_CHARS);
-      if (saved) {
-        const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed)) return parsed;
-      }
-    } catch (e) {}
+    for (const key of STORAGE_KEYS_CHARS) {
+      try {
+        const saved = localStorage.getItem(key);
+        if (saved) {
+          const parsed = JSON.parse(saved);
+          if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+        }
+      } catch (e) {}
+    }
     return DEFAULT_CHARACTERS;
   });
 
   // Settings config
   const [modelArkConfig, setModelArkConfig] = useState<ModelArkConfig>(() => {
-    try {
-      const saved = localStorage.getItem(STORAGE_KEY_CONFIG);
-      if (saved) return JSON.parse(saved);
-    } catch (e) {}
+    for (const key of STORAGE_KEYS_CONFIG) {
+      try {
+        const saved = localStorage.getItem(key);
+        if (saved) return JSON.parse(saved);
+      } catch (e) {}
+    }
     return {
       endpoint: 'https://ark.ap-southeast.byteplus.com/api/v3/contents/generations',
       maskedKey: 'Loading...',
@@ -210,17 +298,19 @@ export const DramaProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
   const [statusInfo, setStatusInfo] = useState<ModelArkStatusResponse | null>(null);
 
-  // Projects list
+  // Projects list across any storage version or session (cleansed of broken placeholder URLs)
   const [projects, setProjects] = useState<DramaProject[]>(() => {
-    try {
-      const saved = localStorage.getItem(STORAGE_KEY_PROJECTS);
-      if (saved) {
-        const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
-      }
-    } catch (e) {}
+    for (const key of STORAGE_KEYS_PROJECTS) {
+      try {
+        const saved = localStorage.getItem(key);
+        if (saved) {
+          const parsed = JSON.parse(saved);
+          if (Array.isArray(parsed) && parsed.length > 0) return sanitizeProjects(parsed);
+        }
+      } catch (e) {}
+    }
     // Seed initial demo project with 40 episodes and 5 clips each!
-    return [createInitialDemoProject()];
+    return sanitizeProjects([createInitialDemoProject()]);
   });
 
   const [currentProject, setCurrentProject] = useState<DramaProject | null>(() => {
@@ -237,9 +327,18 @@ export const DramaProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const [history, setHistory] = useState<DramaProject[]>([]);
   const [redoStack, setRedoStack] = useState<DramaProject[]>([]);
 
+  // Batch generation ref: batches 5 clips at a time (1 episode per batch) to prevent network timeouts
+  const batchGenerationRef = useRef<{ isBatchMode: boolean; projectId: string | null }>({
+    isBatchMode: false,
+    projectId: null,
+  });
+
   // Ref to always access current queue state in async loop
   const queueRef = useRef<QueueJob[]>(queue);
   queueRef.current = queue;
+
+  const projectsRef = useRef<DramaProject[]>(projects);
+  projectsRef.current = projects;
 
   const isQueueRunningRef = useRef(isQueueRunning);
   isQueueRunningRef.current = isQueueRunning;
@@ -266,9 +365,10 @@ export const DramaProvider: React.FC<{ children: React.ReactNode }> = ({ childre
             setCharacters(serverState.characters);
           }
           if (Array.isArray(serverState.projects) && serverState.projects.length > 0) {
-            setProjects(serverState.projects);
+            const sanitized = sanitizeProjects(serverState.projects);
+            setProjects(sanitized);
             if (serverState.currentProjectId) {
-              const matched = serverState.projects.find((p: any) => p.id === serverState.currentProjectId);
+              const matched = sanitized.find((p: any) => p.id === serverState.currentProjectId);
               if (matched) setCurrentProject(matched);
             }
           }
@@ -314,13 +414,16 @@ export const DramaProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   // Sync to local storage & server-side auto-save (debounced)
   useEffect(() => {
     try {
-      localStorage.setItem(STORAGE_KEY_PROJECTS, JSON.stringify(projects));
+      localStorage.setItem('takue_microdrama_projects_v6', JSON.stringify(projects));
+      localStorage.setItem('takue_microdrama_projects', JSON.stringify(projects));
     } catch (e) {}
     try {
-      localStorage.setItem(STORAGE_KEY_CHARS, JSON.stringify(characters));
+      localStorage.setItem('takue_microdrama_characters_v6', JSON.stringify(characters));
+      localStorage.setItem('takue_microdrama_characters', JSON.stringify(characters));
     } catch (e) {}
     try {
-      localStorage.setItem(STORAGE_KEY_CONFIG, JSON.stringify(modelArkConfig));
+      localStorage.setItem('takue_microdrama_config_v6', JSON.stringify(modelArkConfig));
+      localStorage.setItem('takue_microdrama_config', JSON.stringify(modelArkConfig));
     } catch (e) {}
 
     // Auto-save to server storage
@@ -337,12 +440,131 @@ export const DramaProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const forceSaveNow = useCallback(async () => {
     setIsAutoSaving(true);
     try {
-      localStorage.setItem(STORAGE_KEY_PROJECTS, JSON.stringify(projects));
-      localStorage.setItem(STORAGE_KEY_CHARS, JSON.stringify(characters));
-      localStorage.setItem(STORAGE_KEY_CONFIG, JSON.stringify(modelArkConfig));
+      localStorage.setItem('takue_microdrama_projects_v6', JSON.stringify(projects));
+      localStorage.setItem('takue_microdrama_projects', JSON.stringify(projects));
+      localStorage.setItem('takue_microdrama_characters_v6', JSON.stringify(characters));
+      localStorage.setItem('takue_microdrama_characters', JSON.stringify(characters));
+      localStorage.setItem('takue_microdrama_config_v6', JSON.stringify(modelArkConfig));
+      localStorage.setItem('takue_microdrama_config', JSON.stringify(modelArkConfig));
     } catch (e) {}
     await persistStateToServer(projects, characters, modelArkConfig, currentProject?.id);
   }, [projects, characters, modelArkConfig, currentProject?.id, persistStateToServer]);
+
+  // Export full studio backup JSON file
+  const exportBackupJson = useCallback(() => {
+    const backupData = {
+      exportedAt: new Date().toISOString(),
+      projects,
+      characters,
+      currentProjectId: currentProjectRef.current?.id,
+      modelArkConfig,
+    };
+    const blob = new Blob([JSON.stringify(backupData, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `Takue_Microdrama_Backup_${new Date().toISOString().slice(0, 10)}.json`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  }, [projects, characters, modelArkConfig]);
+
+  // Import studio backup JSON file
+  const importBackupJson = useCallback(
+    (jsonString: string): boolean => {
+      try {
+        const parsed = JSON.parse(jsonString);
+        if (parsed.characters && Array.isArray(parsed.characters)) {
+          setCharacters(parsed.characters);
+        }
+        if (parsed.projects && Array.isArray(parsed.projects)) {
+          setProjects(parsed.projects);
+          if (parsed.currentProjectId) {
+            const found = parsed.projects.find((p: any) => p.id === parsed.currentProjectId);
+            if (found) setCurrentProject(found);
+            else setCurrentProject(parsed.projects[0] || null);
+          } else {
+            setCurrentProject(parsed.projects[0] || null);
+          }
+        }
+        if (parsed.modelArkConfig) {
+          setModelArkConfig((prev) => ({ ...prev, ...parsed.modelArkConfig }));
+        }
+        forceSaveNow();
+        return true;
+      } catch (e) {
+        console.error('Import backup failed:', e);
+        return false;
+      }
+    },
+    [forceSaveNow]
+  );
+
+  // Set scene look for a specific character in a specific clip
+  const setClipCharacterLook = useCallback(
+    (episodeNumber: number, clipNumber: number, characterId: string, lookId: string) => {
+      if (!currentProjectRef.current) return;
+      const targetEp = currentProjectRef.current.episodes.find((e) => e.episodeNumber === episodeNumber);
+      const targetClip = targetEp?.clips.find((c) => c.clipNumber === clipNumber);
+      if (!targetClip) return;
+
+      const overrides = { ...(targetClip.characterStageOverrides || {}), [characterId]: lookId };
+      const char = characters.find((c) => c.id === characterId);
+
+      let updatedPrompt = targetClip.prompt;
+      if (char) {
+        const look = getCharacterLookForClip(char, { characterStageOverrides: overrides, episodeNumber });
+        const lookTag = `[SCENE LOOK: ${char.name} in ${look.label} (${look.lifestyleTag || 'Style'}) - ${look.description || char.clothingDetails}]`;
+        if (updatedPrompt.includes(`[SCENE LOOK: ${char.name}`)) {
+          updatedPrompt = updatedPrompt.replace(new RegExp(`\\[SCENE LOOK: ${char.name}[^\\]]*\\]`, 'g'), lookTag);
+        } else {
+          updatedPrompt = `${updatedPrompt} | ${lookTag}`;
+        }
+      }
+
+      const updatedClip: Clip = {
+        ...targetClip,
+        characterStageOverrides: overrides,
+        prompt: updatedPrompt,
+      };
+
+      setProjects((prev) =>
+        prev.map((p) => {
+          if (p.id !== currentProjectRef.current?.id) return p;
+          return {
+            ...p,
+            episodes: p.episodes.map((ep) => {
+              if (ep.episodeNumber !== episodeNumber) return ep;
+              return {
+                ...ep,
+                clips: ep.clips.map((c) => (c.clipNumber === clipNumber ? updatedClip : c)),
+              };
+            }),
+            updatedAt: Date.now(),
+          };
+        })
+      );
+
+      if (currentProjectRef.current) {
+        setCurrentProject((prev) => {
+          if (!prev) return null;
+          return {
+            ...prev,
+            episodes: prev.episodes.map((ep) => {
+              if (ep.episodeNumber !== episodeNumber) return ep;
+              return {
+                ...ep,
+                clips: ep.clips.map((c) => (c.clipNumber === clipNumber ? updatedClip : c)),
+              };
+            }),
+            updatedAt: Date.now(),
+          };
+        });
+      }
+    },
+    [characters]
+  );
 
   // Fetch ModelArk backend status on boot
   useEffect(() => {
@@ -521,55 +743,433 @@ export const DramaProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     [currentProject, updateProject]
   );
 
-  // Direct download clip
+  // Delete a single unwanted episode
+  const deleteEpisode = useCallback(
+    (projectId: string, episodeNumber: number) => {
+      const proj = projects.find((p) => p.id === projectId);
+      if (!proj) return;
+      pushHistory(proj);
+
+      // Remove jobs for this episode from the queue
+      setQueue((prev) => prev.filter((j) => !(j.projectId === projectId && j.episodeNumber === episodeNumber)));
+
+      const updatedEpisodes = proj.episodes.filter((e) => e.episodeNumber !== episodeNumber);
+
+      const updatedProject: DramaProject = {
+        ...proj,
+        episodes: updatedEpisodes,
+        totalEpisodes: updatedEpisodes.length,
+        updatedAt: Date.now(),
+      };
+
+      updateProject(updatedProject);
+      soundFx.playPaperRustle(0.3);
+    },
+    [projects, pushHistory, updateProject]
+  );
+
+  // Batch delete multiple unwanted episodes
+  const deleteEpisodes = useCallback(
+    (projectId: string, episodeNumbers: number[]) => {
+      const proj = projects.find((p) => p.id === projectId);
+      if (!proj || episodeNumbers.length === 0) return;
+      pushHistory(proj);
+
+      const numSet = new Set(episodeNumbers);
+      setQueue((prev) => prev.filter((j) => !(j.projectId === projectId && numSet.has(j.episodeNumber))));
+
+      const updatedEpisodes = proj.episodes.filter((e) => !numSet.has(e.episodeNumber));
+
+      const updatedProject: DramaProject = {
+        ...proj,
+        episodes: updatedEpisodes,
+        totalEpisodes: updatedEpisodes.length,
+        updatedAt: Date.now(),
+      };
+
+      updateProject(updatedProject);
+      soundFx.playPaperRustle(0.4);
+    },
+    [projects, pushHistory, updateProject]
+  );
+
+  // Add a new episode
+  const addEpisode = useCallback(
+    (projectId: string, folderId?: string): Episode => {
+      const proj = projects.find((p) => p.id === projectId);
+      if (!proj) throw new Error('Project not found');
+      pushHistory(proj);
+
+      const existingNumbers = proj.episodes.map((e) => e.episodeNumber);
+      const nextEpNumber = existingNumbers.length > 0 ? Math.max(...existingNumbers) + 1 : 1;
+      const targetFolder = proj.folders?.find((f) => f.id === folderId);
+
+      const sceneTypes = [
+        { type: 'Establishing Shot', camera: 'Slow cinematic push-in, vertical 9:16 framing, volumetric lighting' },
+        { type: 'Confrontation', camera: 'Tense medium shot, sharp eye-line focus, dramatic shadows, key lighting' },
+        { type: 'Reaction', camera: 'Extreme close-up on emotional shift, micro-expressions, 8k cinematic skin texture' },
+        { type: 'Escalation', camera: 'Dynamic tracking camera, sudden action, sharp reflections, high velocity tension' },
+        { type: 'Cliffhanger', camera: 'Rapid zoom cut, sudden dramatic reveal, freeze-frame tension, cliffhanger beat' },
+      ];
+
+      const clips: Clip[] = [];
+      for (let cl = 1; cl <= (proj.clipsPerEpisode || 5); cl++) {
+        const scene = sceneTypes[(cl - 1) % sceneTypes.length];
+        const rawPrompt = `Vertical 9:16 cinematic microdrama. Episode ${nextEpNumber} — Scene ${cl} (${scene.type}). ${scene.camera}. Photorealistic lighting, Seedance cinematic style, 24fps motion blur.`;
+        clips.push({
+          id: `clip_${projectId}_ep${nextEpNumber}_c${cl}`,
+          projectId,
+          episodeNumber: nextEpNumber,
+          clipNumber: cl,
+          totalEpisodes: proj.episodes.length + 1,
+          totalClipsInEpisode: proj.clipsPerEpisode || 5,
+          sceneType: scene.type,
+          prompt: rawPrompt,
+          selectedModel: proj.selectedModel,
+          generationStatus: 'queued',
+          customFilename: getDefaultClipFilename(nextEpNumber, cl),
+          durationSeconds: 12,
+          retryCount: 0,
+          createdAt: Date.now(),
+          trimStart: 0,
+          trimEnd: 12,
+          volume: 1,
+        });
+      }
+
+      const newEp: Episode = {
+        episodeNumber: nextEpNumber,
+        title: `Episode ${nextEpNumber}`,
+        summary: `Episode ${nextEpNumber} sequence in ${targetFolder ? targetFolder.name : 'Main Series'}.`,
+        clips,
+        isCombined: false,
+        folderId: targetFolder ? targetFolder.id : undefined,
+        folderName: targetFolder ? targetFolder.name : undefined,
+      };
+
+      const updatedProject: DramaProject = {
+        ...proj,
+        episodes: [...proj.episodes, newEp],
+        totalEpisodes: proj.episodes.length + 1,
+        updatedAt: Date.now(),
+      };
+
+      updateProject(updatedProject);
+      soundFx.playWhoosh(0.2);
+      return newEp;
+    },
+    [projects, pushHistory, updateProject]
+  );
+
+  // Folder creation within series
+  const createFolder = useCallback(
+    (projectId: string, name: string, color: string = 'blue', description?: string): EpisodeFolder => {
+      const proj = projects.find((p) => p.id === projectId);
+      if (!proj) throw new Error('Project not found');
+      pushHistory(proj);
+
+      const newFolder: EpisodeFolder = {
+        id: `folder_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+        name: name.trim() || 'New Folder',
+        color,
+        description: description?.trim(),
+        createdAt: Date.now(),
+      };
+
+      const existingFolders = proj.folders || [];
+      const updatedProject: DramaProject = {
+        ...proj,
+        folders: [...existingFolders, newFolder],
+        updatedAt: Date.now(),
+      };
+
+      updateProject(updatedProject);
+      soundFx.playWhoosh(0.2);
+      return newFolder;
+    },
+    [projects, pushHistory, updateProject]
+  );
+
+  // Rename a folder
+  const renameFolder = useCallback(
+    (projectId: string, folderId: string, newName: string) => {
+      const proj = projects.find((p) => p.id === projectId);
+      if (!proj) return;
+      const cleanName = newName.trim();
+      if (!cleanName) return;
+
+      const updatedFolders = (proj.folders || []).map((f) =>
+        f.id === folderId ? { ...f, name: cleanName } : f
+      );
+
+      const updatedEpisodes = proj.episodes.map((ep) =>
+        ep.folderId === folderId ? { ...ep, folderName: cleanName } : ep
+      );
+
+      const updatedProject: DramaProject = {
+        ...proj,
+        folders: updatedFolders,
+        episodes: updatedEpisodes,
+        updatedAt: Date.now(),
+      };
+
+      updateProject(updatedProject);
+    },
+    [projects, updateProject]
+  );
+
+  // Delete a folder
+  const deleteFolder = useCallback(
+    (projectId: string, folderId: string) => {
+      const proj = projects.find((p) => p.id === projectId);
+      if (!proj) return;
+      pushHistory(proj);
+
+      const updatedFolders = (proj.folders || []).filter((f) => f.id !== folderId);
+      const updatedEpisodes = proj.episodes.map((ep) =>
+        ep.folderId === folderId ? { ...ep, folderId: undefined, folderName: undefined } : ep
+      );
+
+      const updatedProject: DramaProject = {
+        ...proj,
+        folders: updatedFolders,
+        episodes: updatedEpisodes,
+        updatedAt: Date.now(),
+      };
+
+      updateProject(updatedProject);
+      soundFx.playPaperRustle(0.3);
+    },
+    [projects, pushHistory, updateProject]
+  );
+
+  // Move an episode to a folder
+  const moveEpisodeToFolder = useCallback(
+    (projectId: string, episodeNumber: number, folderId?: string) => {
+      const proj = projects.find((p) => p.id === projectId);
+      if (!proj) return;
+
+      const targetFolder = proj.folders?.find((f) => f.id === folderId);
+      const updatedEpisodes = proj.episodes.map((ep) =>
+        ep.episodeNumber === episodeNumber
+          ? {
+              ...ep,
+              folderId: targetFolder ? targetFolder.id : undefined,
+              folderName: targetFolder ? targetFolder.name : undefined,
+            }
+          : ep
+      );
+
+      const updatedProject: DramaProject = {
+        ...proj,
+        episodes: updatedEpisodes,
+        updatedAt: Date.now(),
+      };
+
+      updateProject(updatedProject);
+      soundFx.playWhoosh(0.15);
+    },
+    [projects, updateProject]
+  );
+
+  // Batch move episodes to a folder
+  const moveEpisodesToFolder = useCallback(
+    (projectId: string, episodeNumbers: number[], folderId?: string) => {
+      const proj = projects.find((p) => p.id === projectId);
+      if (!proj) return;
+
+      const targetFolder = proj.folders?.find((f) => f.id === folderId);
+      const numSet = new Set(episodeNumbers);
+
+      const updatedEpisodes = proj.episodes.map((ep) =>
+        numSet.has(ep.episodeNumber)
+          ? {
+              ...ep,
+              folderId: targetFolder ? targetFolder.id : undefined,
+              folderName: targetFolder ? targetFolder.name : undefined,
+            }
+          : ep
+      );
+
+      const updatedProject: DramaProject = {
+        ...proj,
+        episodes: updatedEpisodes,
+        updatedAt: Date.now(),
+      };
+
+      updateProject(updatedProject);
+      soundFx.playWhoosh(0.2);
+    },
+    [projects, updateProject]
+  );
+
+  // Export folder as ZIP organized into subdirectories
+  const exportFolderZip = useCallback(
+    async (projectId: string, folderId?: string) => {
+      const proj = projects.find((p) => p.id === projectId);
+      if (!proj) return;
+
+      const zip = new JSZip();
+      const folderName = folderId
+        ? proj.folders?.find((f) => f.id === folderId)?.name || 'Folder'
+        : 'All_Episodes';
+
+      const targetEpisodes = folderId
+        ? proj.episodes.filter((e) => e.folderId === folderId)
+        : proj.episodes;
+
+      if (targetEpisodes.length === 0) {
+        alert('No episodes found in this folder to export.');
+        return;
+      }
+
+      const rootZipFolder = zip.folder(`${proj.title.replace(/[^a-zA-Z0-9_-]/g, '_')}_${folderName.replace(/[^a-zA-Z0-9_-]/g, '_')}`);
+      if (!rootZipFolder) return;
+
+      rootZipFolder.file(
+        'manifest.json',
+        JSON.stringify(
+          {
+            seriesTitle: proj.title,
+            folderName,
+            totalEpisodes: targetEpisodes.length,
+            exportedAt: new Date().toISOString(),
+            episodes: targetEpisodes.map((e) => ({
+              episodeNumber: e.episodeNumber,
+              title: e.title,
+              summary: e.summary,
+              folderName: e.folderName || 'General',
+              clipsCount: e.clips.length,
+              isCombined: e.isCombined,
+            })),
+          },
+          null,
+          2
+        )
+      );
+
+      for (const ep of targetEpisodes) {
+        const epFolderName = `Episode_${String(ep.episodeNumber).padStart(2, '0')}_${(ep.title || '').replace(/[^a-zA-Z0-9_-]/g, '_')}`;
+        const epZip = rootZipFolder.folder(epFolderName);
+        if (!epZip) continue;
+
+        epZip.file(
+          'episode_metadata.json',
+          JSON.stringify(
+            {
+              episodeNumber: ep.episodeNumber,
+              title: ep.title,
+              summary: ep.summary,
+              folder: ep.folderName || 'General',
+              isCombined: ep.isCombined,
+              combinedFilename: ep.combinedFilename,
+              clips: ep.clips.map((c) => ({
+                clipNumber: c.clipNumber,
+                sceneType: c.sceneType,
+                prompt: c.prompt,
+                customFilename: c.customFilename,
+                durationSeconds: c.durationSeconds,
+                generationStatus: c.generationStatus,
+                outputVideoUrl: c.outputVideoUrl,
+              })),
+            },
+            null,
+            2
+          )
+        );
+
+        for (const clip of ep.clips) {
+          if (clip.outputVideoUrl && clip.outputVideoUrl.startsWith('http') && !clip.outputVideoUrl.includes('gtv-videos-bucket') && !clip.outputVideoUrl.includes('ForBiggerBlazes')) {
+            try {
+              const resp = await fetch(clip.outputVideoUrl);
+              if (resp.ok) {
+                const blob = await resp.blob();
+                epZip.file(clip.customFilename, blob);
+              }
+            } catch (err) {
+              epZip.file(`${clip.customFilename}.url.txt`, `Direct URL: ${clip.outputVideoUrl}\nPrompt: ${clip.prompt}`);
+            }
+          } else {
+            epZip.file(`${clip.customFilename}.prompt.txt`, `Scene: ${clip.sceneType}\nDuration: ${clip.durationSeconds}s\nPrompt:\n${clip.prompt}`);
+          }
+        }
+      }
+
+      const content = await zip.generateAsync({ type: 'blob' });
+      const downloadUrl = URL.createObjectURL(content);
+      const a = document.createElement('a');
+      a.href = downloadUrl;
+      a.download = `${proj.title.replace(/[^a-zA-Z0-9_-]/g, '_')}_${folderName.replace(/[^a-zA-Z0-9_-]/g, '_')}_Episodes.zip`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(downloadUrl);
+      soundFx.playDramaticBoom(0.4);
+    },
+    [projects]
+  );
+
+  // Direct download clip (uses REAL URL from DB, alerts if still rendering)
   const downloadClipVideo = useCallback((clip: Clip) => {
+    if (!clip.outputVideoUrl || clip.outputVideoUrl.includes('gtv-videos-bucket') || clip.outputVideoUrl.includes('ForBiggerBlazes') || clip.generationStatus !== 'completed') {
+      alert(`Clip ${getDefaultClipFilename(clip.episodeNumber, clip.clipNumber)} is currently rendering on ModelArk. Download will be available as soon as rendering completes.`);
+      return;
+    }
     soundFx.playDramaticBoom(0.3);
     const link = document.createElement('a');
-    link.href = clip.outputVideoUrl || 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4';
+    link.href = clip.outputVideoUrl;
     link.download = clip.customFilename || getDefaultClipFilename(clip.episodeNumber, clip.clipNumber);
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
   }, []);
 
-  // Direct download combined episode
+  // Direct download combined episode (uses REAL URL, alerts if still rendering)
   const downloadEpisodeVideo = useCallback((episode: Episode) => {
+    if (!episode.combinedVideoUrl || episode.combinedVideoUrl.includes('gtv-videos-bucket') || episode.combinedVideoUrl.includes('ForBiggerBlazes') || !episode.isCombined) {
+      alert(`Episode ${episode.episodeNumber} is still being rendered/combined. Download will be available once rendering completes.`);
+      return;
+    }
     soundFx.playDramaticBoom(0.4);
     const link = document.createElement('a');
-    link.href = episode.combinedVideoUrl || 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4';
+    link.href = episode.combinedVideoUrl;
     link.download = episode.combinedFilename || getDefaultEpisodeFilename(episode.episodeNumber);
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
   }, []);
 
-  // Queue actions: Enqueue entire project (all 40 episodes x 5 clips sequentially)
+  // Queue actions: Batch generate 5 clips at a time (not 200 at once to avoid timeouts)
   const enqueueEntireProject = useCallback(
     (projectId: string) => {
       const proj = projects.find((p) => p.id === projectId);
       if (!proj) return;
 
-      const newJobs: QueueJob[] = [];
-      // Strictly in order: Ep1 Clip1..5 -> Ep2 Clip1..5 -> ... -> Ep40 Clip1..5
-      proj.episodes.forEach((ep) => {
-        ep.clips.forEach((clip) => {
-          if (clip.generationStatus !== 'completed') {
-            newJobs.push({
-              jobId: `job_${proj.id}_ep${ep.episodeNumber}_clip${clip.clipNumber}_${Date.now()}`,
-              projectId: proj.id,
-              episodeNumber: ep.episodeNumber,
-              clipNumber: clip.clipNumber,
-              clipId: clip.id,
-              prompt: clip.prompt,
-              selectedModel: clip.selectedModel,
-              status: 'queued',
-              progressPercent: 0,
-              retryCount: clip.retryCount || 0,
-            });
-          }
-        });
-      });
+      // Find first episode with uncompleted clips
+      const firstUnfinishedEp =
+        proj.episodes.find((ep) => ep.clips.some((c) => c.generationStatus !== 'completed')) ||
+        proj.episodes[0];
 
+      if (!firstUnfinishedEp) {
+        alert('All episodes in this drama project are already completed!');
+        return;
+      }
+
+      // Batch generate only this episode (5 clips at a time!)
+      const newJobs: QueueJob[] = firstUnfinishedEp.clips.map((clip) => ({
+        jobId: `job_${proj.id}_ep${firstUnfinishedEp.episodeNumber}_clip${clip.clipNumber}_${Date.now()}`,
+        projectId: proj.id,
+        episodeNumber: firstUnfinishedEp.episodeNumber,
+        clipNumber: clip.clipNumber,
+        clipId: clip.id,
+        prompt: clip.prompt,
+        selectedModel: clip.selectedModel,
+        status: 'queued',
+        progressPercent: 0,
+        retryCount: clip.retryCount || 0,
+      }));
+
+      batchGenerationRef.current = { isBatchMode: true, projectId };
       setQueue(newJobs);
       setIsQueueRunning(true);
       setIsQueuePaused(false);
@@ -655,6 +1255,7 @@ export const DramaProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   }, []);
 
   const stopQueue = useCallback(() => {
+    batchGenerationRef.current = { isBatchMode: false, projectId: null };
     setIsQueueRunning(false);
     setIsQueuePaused(false);
   }, []);
@@ -666,7 +1267,7 @@ export const DramaProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     }
   }, [queue]);
 
-  // Master Sequential Queue Processing Loop
+  // Master Sequential Queue Processing Loop (processes 5-clip batches)
   useEffect(() => {
     if (!isQueueRunning || isQueuePaused) return;
 
@@ -680,7 +1281,46 @@ export const DramaProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       const nextIndex = currentQueue.findIndex((j) => j.status === 'queued');
 
       if (nextIndex === -1) {
-        // Queue finished!
+        // Check if any jobs in this 5-clip batch are still generating or rendering
+        const hasInFlight = currentQueue.some((j) => j.status === 'generating' || j.status === 'rendering');
+        if (hasInFlight) {
+          timeoutId = setTimeout(processNextJob, 1000);
+          return;
+        }
+
+        // Current 5-clip batch is finished! Check if in batch mode to advance to next 5 clips
+        if (batchGenerationRef.current.isBatchMode && batchGenerationRef.current.projectId) {
+          const proj = currentProjectRef.current?.id === batchGenerationRef.current.projectId
+            ? currentProjectRef.current
+            : projectsRef.current.find((p) => p.id === batchGenerationRef.current.projectId);
+
+          const nextUnfinishedEp = proj?.episodes.find((ep) =>
+            ep.clips.some((c) => c.generationStatus !== 'completed')
+          );
+
+          if (nextUnfinishedEp) {
+            console.log(`[Batch Generator] Progressing to next batch: Episode ${nextUnfinishedEp.episodeNumber} (5 clips)`);
+            const nextBatchJobs: QueueJob[] = nextUnfinishedEp.clips.map((clip) => ({
+              jobId: `job_${proj!.id}_ep${nextUnfinishedEp.episodeNumber}_clip${clip.clipNumber}_${Date.now()}`,
+              projectId: proj!.id,
+              episodeNumber: nextUnfinishedEp.episodeNumber,
+              clipNumber: clip.clipNumber,
+              clipId: clip.id,
+              prompt: clip.prompt,
+              selectedModel: clip.selectedModel,
+              status: 'queued',
+              progressPercent: 0,
+              retryCount: clip.retryCount || 0,
+            }));
+            setQueue(nextBatchJobs);
+            timeoutId = setTimeout(processNextJob, 800);
+            return;
+          } else {
+            batchGenerationRef.current = { isBatchMode: false, projectId: null };
+          }
+        }
+
+        // All queued jobs / batches finished!
         setIsQueueRunning(false);
         soundFx.playDramaticBoom(0.4);
         return;
@@ -721,17 +1361,23 @@ export const DramaProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       }
 
       try {
-        // Collect locked characters & reference images matching the current episode's stage (e.g. Poor vs Rich)
+        // 1. Get current clip from project to check scene look overrides
+        const currentEp = currentProjectRef.current?.episodes.find(
+          (e) => e.episodeNumber === activeJob.episodeNumber
+        );
+        const currentClip = currentEp?.clips.find((c) => c.clipNumber === activeJob.clipNumber);
+
+        // Collect locked characters & reference images matching the current scene look
         const lockedChars = characters.filter((c) => c.isLocked);
         const referenceImages: string[] = [];
 
-        // 1. Prioritize active stage reference image for this episode
+        // 1. Prioritize active scene lifestyle look reference image
         lockedChars.forEach((c) => {
-          const stage = getCharacterStageForEpisode(c, activeJob.episodeNumber);
-          if (stage.url && stage.url.length > 5 && !referenceImages.includes(stage.url)) {
-            referenceImages.push(stage.url);
+          const sceneLook = getCharacterLookForClip(c, currentClip || { episodeNumber: activeJob.episodeNumber });
+          if (sceneLook.url && sceneLook.url.length > 5 && !referenceImages.includes(sceneLook.url)) {
+            referenceImages.push(sceneLook.url);
           }
-          // Also append remaining stage looks so ModelArk maintains facial consistency across transformations
+          // Also append all character looks so ModelArk maintains facial consistency across outfits/lifestyles
           if (c.stageLooks) {
             c.stageLooks.forEach((look) => {
               if (look.url && look.url.length > 5 && !referenceImages.includes(look.url)) {
@@ -751,14 +1397,14 @@ export const DramaProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         const characterDetails = lockedChars.length > 0
           ? lockedChars
               .map((c) => {
-                const stage = getCharacterStageForEpisode(c, activeJob.episodeNumber);
+                const sceneLook = getCharacterLookForClip(c, currentClip || { episodeNumber: activeJob.episodeNumber });
                 const genderLabel =
                   c.gender === 'female'
                     ? 'STRICT FEMALE (Woman / Girl, feminine facial traits - STRICTLY NOT A MAN)'
                     : c.gender === 'male'
                     ? 'MALE (Man / Boy)'
                     : 'CHARACTER';
-                return `${genderLabel}: ${c.name} (${c.role}), Base Facial Traits: ${c.visualTraits}. [EPISODE ${activeJob.episodeNumber} CURRENT STAGE: "${stage.label.toUpperCase()}" (Ep ${stage.fromEpisode}-${stage.toEpisode}) | Appearance & Wardrobe: ${stage.description || c.clothingDetails}. Reference Photo matches this character in this stage. Maintain exact facial features across stages.]`;
+                return `${genderLabel}: ${c.name} (${c.role}), Base Facial Traits: ${c.visualTraits}. [SCENE LIFESTYLE LOOK: "${sceneLook.label}" (${sceneLook.lifestyleTag || 'Style'}) | Scene Wardrobe & Ambiance: ${sceneLook.description || c.clothingDetails}. Video generation strictly matches this photo & wardrobe for this scene.]`;
               })
               .join(' | ')
           : undefined;
@@ -808,10 +1454,18 @@ export const DramaProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
           try {
             const polled = await ModelArkService.pollJob(genRes.jobId);
-            if (polled.generationStatus === 'completed') {
+            const realVideoUrl = polled.outputVideoUrl;
+            const hasRealUrl =
+              realVideoUrl &&
+              typeof realVideoUrl === 'string' &&
+              realVideoUrl.startsWith('http') &&
+              !realVideoUrl.includes('gtv-videos-bucket') &&
+              !realVideoUrl.includes('ForBiggerBlazes');
+
+            if (polled.generationStatus === 'completed' && hasRealUrl) {
               isDone = true;
 
-              // Job completed successfully! Advance queue to next clip
+              // Job completed successfully with REAL ModelArk video URL! Advance queue
               setQueue((prev) =>
                 prev.map((j) =>
                   j.jobId === activeJob.jobId
@@ -824,7 +1478,7 @@ export const DramaProvider: React.FC<{ children: React.ReactNode }> = ({ childre
                 )
               );
 
-              // Update project clip with output video URL and completed status
+              // Update project clip with REAL output video URL and completed status
               if (currentProjectRef.current) {
                 const ep = currentProjectRef.current.episodes.find(
                   (e) => e.episodeNumber === activeJob.episodeNumber
@@ -834,7 +1488,7 @@ export const DramaProvider: React.FC<{ children: React.ReactNode }> = ({ childre
                   updateClipInProject({
                     ...clip,
                     generationStatus: 'completed',
-                    outputVideoUrl: polled.outputVideoUrl,
+                    outputVideoUrl: realVideoUrl,
                     completedAt: Date.now(),
                   });
                 }
@@ -842,12 +1496,43 @@ export const DramaProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
               soundFx.playWhoosh(0.2);
               break;
+            } else if (
+              polled.generationStatus === 'rendering' ||
+              polled.generationStatus === 'generating' ||
+              (polled.generationStatus === 'completed' && !hasRealUrl)
+            ) {
+              // Video is still rendering on ModelArk cluster - show "Rendering..."
+              if (currentProjectRef.current) {
+                const ep = currentProjectRef.current.episodes.find(
+                  (e) => e.episodeNumber === activeJob.episodeNumber
+                );
+                const clip = ep?.clips.find((c) => c.clipNumber === activeJob.clipNumber);
+                if (clip && clip.generationStatus !== 'rendering') {
+                  updateClipInProject({
+                    ...clip,
+                    generationStatus: 'rendering',
+                  });
+                }
+              }
             } else if (polled.generationStatus === 'failed') {
               throw new Error(polled.error || 'ModelArk task failed');
             }
           } catch (e: any) {
             if (pollCount >= maxPolls) {
-              throw e;
+              // Generation is still rendering on ModelArk cluster - leave in rendering status
+              if (currentProjectRef.current) {
+                const ep = currentProjectRef.current.episodes.find(
+                  (e) => e.episodeNumber === activeJob.episodeNumber
+                );
+                const clip = ep?.clips.find((c) => c.clipNumber === activeJob.clipNumber);
+                if (clip) {
+                  updateClipInProject({
+                    ...clip,
+                    generationStatus: 'rendering',
+                  });
+                }
+              }
+              break;
             }
           }
         }
@@ -929,16 +1614,16 @@ export const DramaProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     const newEpisodes: Episode[] = splitResult.episodes.map((epData: any) => {
       const epNum = epData.episode_number;
 
-      // Ground characters into their active life stage (e.g. Poor in Ep 1-20, Rich in Ep 21-40)
+      // Ground characters into their scene lifestyle look
       const episodeStageContinuity = lockedChars.length > 0
         ? `Character Continuity: ${lockedChars.map((c) => {
-            const stage = getCharacterStageForEpisode(c, epNum);
+            const look = getCharacterLookForClip(c, { episodeNumber: epNum });
             const genderPrefix = c.gender === 'female'
               ? 'FEMALE (Woman / Girl, strictly female presentation - NOT A MAN)'
               : c.gender === 'male'
               ? 'MALE (Man / Boy)'
               : 'CHARACTER';
-            return `[${genderPrefix} ${c.role}: "${c.name}" in ${stage.label.toUpperCase()} (Ep ${stage.fromEpisode}-${stage.toEpisode}) - Face: ${c.visualTraits}, Status & Wardrobe: ${stage.description || c.clothingDetails}]`;
+            return `[${genderPrefix} ${c.role}: "${c.name}" - ${look.label} (${look.lifestyleTag || 'Style'}) | Face: ${c.visualTraits}, Wardrobe: ${look.description || c.clothingDetails}]`;
           }).join('; ')}.`
         : '';
 
@@ -1128,6 +1813,15 @@ export const DramaProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         downloadClipVideo,
         downloadEpisodeVideo,
         markEpisodeCombined,
+        deleteEpisode,
+        deleteEpisodes,
+        addEpisode,
+        createFolder,
+        renameFolder,
+        deleteFolder,
+        moveEpisodeToFolder,
+        moveEpisodesToFolder,
+        exportFolderZip,
         modelArkConfig,
         updateModelArkConfig,
         checkConnection,
@@ -1135,6 +1829,9 @@ export const DramaProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         lastSavedAt,
         isAutoSaving,
         forceSaveNow,
+        exportBackupJson,
+        importBackupJson,
+        setClipCharacterLook,
       }}
     >
       {children}
@@ -1193,16 +1890,13 @@ function createInitialDemoProject(): DramaProject {
         sceneType,
         prompt,
         selectedModel: 'seedance-1-5-pro-251215',
-        // Make Episode 1 completed so user can immediately test combine & download!
-        generationStatus: isFirstEpisode ? 'completed' : 'queued',
-        outputVideoUrl: isFirstEpisode
-          ? 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4'
-          : undefined,
+        generationStatus: 'queued',
+        outputVideoUrl: undefined,
         customFilename: getDefaultClipFilename(ep, cl),
         durationSeconds: 12,
         retryCount: 0,
         createdAt: Date.now() - 3600000,
-        completedAt: isFirstEpisode ? Date.now() - 1800000 : undefined,
+        completedAt: undefined,
         trimStart: 0,
         trimEnd: 12,
         volume: 1,

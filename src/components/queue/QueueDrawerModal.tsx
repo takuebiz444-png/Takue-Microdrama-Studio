@@ -186,6 +186,7 @@ export const QueueDrawerModal: React.FC<QueueDrawerModalProps> = ({ isOpen, onCl
           ) : (
             queue.map((job) => {
               const isGen = job.status === 'generating';
+              const isRendering = job.status === 'rendering';
               const isDone = job.status === 'completed';
               const isFail = job.status === 'failed';
 
@@ -193,7 +194,7 @@ export const QueueDrawerModal: React.FC<QueueDrawerModalProps> = ({ isOpen, onCl
                 <div
                   key={job.jobId}
                   className={`p-3 rounded-xl border transition-all flex items-center justify-between gap-3 ${
-                    isGen
+                    isGen || isRendering
                       ? 'bg-blue-50/90 border-blue-300 shadow-xs'
                       : isDone
                       ? 'bg-white border-emerald-200'
@@ -203,7 +204,7 @@ export const QueueDrawerModal: React.FC<QueueDrawerModalProps> = ({ isOpen, onCl
                   }`}
                 >
                   <div className="flex items-center gap-3 min-w-0">
-                    {isGen ? (
+                    {isGen || isRendering ? (
                       <Loader2 className="w-4 h-4 text-blue-600 animate-spin shrink-0" />
                     ) : isDone ? (
                       <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
@@ -220,7 +221,9 @@ export const QueueDrawerModal: React.FC<QueueDrawerModalProps> = ({ isOpen, onCl
                         </span>
                         <span
                           className={`text-[10px] font-bold px-1.5 py-0.5 rounded-sm uppercase ${
-                            isGen
+                            isRendering
+                              ? 'bg-amber-100 text-amber-800 animate-pulse'
+                              : isGen
                               ? 'bg-blue-100 text-blue-800'
                               : isDone
                               ? 'bg-emerald-100 text-emerald-800'
@@ -229,7 +232,7 @@ export const QueueDrawerModal: React.FC<QueueDrawerModalProps> = ({ isOpen, onCl
                               : 'bg-slate-100 text-slate-600'
                           }`}
                         >
-                          {job.status === 'queued' ? 'Waiting' : job.status}
+                          {isRendering ? 'Rendering...' : job.status === 'queued' ? 'Waiting' : job.status}
                         </span>
                       </div>
                       <p className="text-[11px] text-slate-500 truncate max-w-md">
