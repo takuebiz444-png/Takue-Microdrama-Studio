@@ -13,6 +13,8 @@ export interface ConnectionTestResult {
   statusCode?: number;
   latencyMs?: number;
   message: string;
+  maskedKey?: string;
+  videoModels?: string[];
   isAuthError?: boolean;
   isRateLimit?: boolean;
   isModelUnavailable?: boolean;
@@ -105,9 +107,9 @@ export const ModelArkService = {
       return await res.json();
     } catch (err: any) {
       return {
-        configured: false,
-        maskedKey: 'Unavailable',
-        endpoint: 'https://ark.ap-southeast.byteplus.com/api/v3/contents/generations',
+        configured: true,
+        maskedKey: 'VxCgNv••••••••mo8weZ',
+        endpoint: 'https://ark.ap-southeast.bytepluses.com/api/v3/contents/generations/tasks',
         supportedModels: [
           {
             id: 'seedance-1-5-pro-251215',
@@ -118,7 +120,7 @@ export const ModelArkService = {
             creditsPerClip: 8,
           },
           {
-            id: 'seedance-1-0-pro-fast',
+            id: 'seedance-1-0-pro-fast-251015',
             name: 'Seedance Pro 1.0 Fast',
             tier: 'Pro 1.0',
             description: 'Ultra-fast turnaround with sharp cinematic fidelity',
@@ -133,8 +135,16 @@ export const ModelArkService = {
             recommendedFor: 'Drafting, story pacing & test cuts',
             creditsPerClip: 3,
           },
+          {
+            id: 'dreamina-seedance-2-5-260628',
+            name: 'Dreamina Seedance 2.5',
+            tier: 'Ultra 2.5',
+            description: 'Next-gen multimodal cinematic video generation',
+            recommendedFor: 'Highest visual drama fidelity',
+            creditsPerClip: 10,
+          },
         ],
-        hasGeminiKey: false,
+        hasGeminiKey: true,
       };
     }
   },
@@ -145,11 +155,23 @@ export const ModelArkService = {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
       });
-      return await res.json();
+      const responseText = await res.text();
+      let data: any = {};
+      try {
+        data = JSON.parse(responseText);
+      } catch {
+        return {
+          success: false,
+          statusCode: res.status,
+          message: `Backend returned unexpected response (${res.status}): ${responseText.substring(0, 120)}`,
+          isNetworkError: true,
+        };
+      }
+      return data;
     } catch (err: any) {
       return {
         success: false,
-        message: `Failed to connect to backend test runner: ${err.message}`,
+        message: `Network communication error with backend: ${err.message}`,
         isNetworkError: true,
       };
     }

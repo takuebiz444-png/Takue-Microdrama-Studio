@@ -1430,10 +1430,51 @@ export const DramaProvider: React.FC<{ children: React.ReactNode }> = ({ childre
           usedCredits: prev.usedCredits + 5,
         }));
 
-        // Poll for completion
+        // Check if backend already finished generation or synthesized video
+        const immediateUrl = genRes.job?.outputVideoUrl || (genRes as any).outputVideoUrl;
+        const hasImmediateUrl =
+          immediateUrl &&
+          typeof immediateUrl === 'string' &&
+          (immediateUrl.startsWith('http') || immediateUrl.startsWith('/uploads')) &&
+          !immediateUrl.includes('gtv-videos-bucket') &&
+          !immediateUrl.includes('ForBiggerBlazes');
+
         let isDone = false;
+        if (genRes.status === 'completed' && hasImmediateUrl) {
+          isDone = true;
+          setQueue((prev) =>
+            prev.map((j) =>
+              j.jobId === activeJob.jobId
+                ? {
+                    ...j,
+                    status: 'completed',
+                    progressPercent: 100,
+                  }
+                : j
+            )
+          );
+
+          if (currentProjectRef.current) {
+            const ep = currentProjectRef.current.episodes.find(
+              (e) => e.episodeNumber === activeJob.episodeNumber
+            );
+            const clip = ep?.clips.find((c) => c.clipNumber === activeJob.clipNumber);
+            if (clip) {
+              updateClipInProject({
+                ...clip,
+                generationStatus: 'completed',
+                outputVideoUrl: immediateUrl,
+                completedAt: Date.now(),
+              });
+            }
+          }
+
+          soundFx.playWhoosh(0.2);
+        }
+
+        // Poll for completion if task is rendering asynchronously
         let pollCount = 0;
-        const maxPolls = 20;
+        const maxPolls = 25;
 
         while (!isDone && pollCount < maxPolls && isMounted) {
           if (!isQueueRunningRef.current) break;
@@ -1458,7 +1499,7 @@ export const DramaProvider: React.FC<{ children: React.ReactNode }> = ({ childre
             const hasRealUrl =
               realVideoUrl &&
               typeof realVideoUrl === 'string' &&
-              realVideoUrl.startsWith('http') &&
+              (realVideoUrl.startsWith('http') || realVideoUrl.startsWith('/uploads')) &&
               !realVideoUrl.includes('gtv-videos-bucket') &&
               !realVideoUrl.includes('ForBiggerBlazes');
 
@@ -1761,6 +1802,13 @@ export const DramaProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
   const checkConnection = useCallback(async () => {
     const res = await ModelArkService.testConnection();
+    if (res.success && res.maskedKey) {
+      setModelArkConfig((prev) => ({
+        ...prev,
+        configured: true,
+        maskedKey: res.maskedKey || prev.maskedKey,
+      }));
+    }
     return res;
   }, []);
 
